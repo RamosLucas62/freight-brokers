@@ -22,7 +22,14 @@ export async function finish(job:InboundJob,status:string,result:AuditReport|nul
 }
 export async function saveAttachment(job:InboundJob,id:string,filename:string,bytes:Buffer) {
  const db=getSupabaseClient();const path=invoiceObjectKey(job.tenant_id,job.id,id);
- try{await putInvoiceObject(path,bytes);}catch{throw new Error('ATTACHMENT_STORAGE_FAILED');}
+ try{await putInvoiceObject(path,bytes);}catch(error){
+  const detail=error instanceof Error?error.message:'unknown_error';
+  const status=typeof error==='object' && error!==null && '$metadata' in error
+   ? (error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode
+   : undefined;
+  console.error('[r2] PutObject failed',JSON.stringify({status,detail}));
+  throw new Error('ATTACHMENT_STORAGE_FAILED');
+ }
  const saved=await db.from('audit_inbound_attachments').upsert({tenant_id:job.tenant_id,job_id:job.id,attachment_id:id,filename,storage_path:path}, {onConflict:'tenant_id,job_id,attachment_id'});
  if(saved.error)throw new Error('ATTACHMENT_METADATA_FAILED');
 }
