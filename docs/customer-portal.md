@@ -1,0 +1,56 @@
+# Painel do cliente
+
+O servidor existente serve o painel em `/`, sem serviço de frontend separado. O Dockerfile inclui os arquivos de `public/`.
+
+## Ativação
+
+1. Aplicar as migrações com `npm run db:migrate`. A migração 004 cria as revisões; a 005 adiciona administradores globais, controle de acesso e histórico administrativo.
+2. Configurar `PORTAL_URL` com a origem pública exata (exemplo: `https://painel.suaempresa.com`) e `SUPABASE_ANON_KEY` com a chave pública do mesmo projeto Supabase. A chave de serviço permanece exclusivamente no servidor.
+3. No Supabase Auth, habilitar login por e-mail, configurar SMTP para entrega aos clientes e adicionar `PORTAL_URL/auth/callback` à lista de Redirect URLs. O template Magic Link deve usar `{{ .ConfirmationURL }}`. Referência: https://supabase.com/docs/guides/auth/auth-email-passwordless
+4. Criar o usuário proprietário no Supabase Auth e executar `node scripts/bootstrap-admin.cjs SEU_EMAIL` com o ambiente de backend configurado. O comando atribui o primeiro administrador somente se nenhum administrador existir. Em seguida, o proprietário pode cadastrar clientes e usuários pelo painel. Não há administrador padrão nem promoção por domínio de e-mail.
+5. Executar `npm run build` e `npm run start:server`, ou reconstruir a imagem Docker. Habilitar `WORKER_ENABLED=true` no serviço responsável pela fila para processar reenvios.
+
+## Comportamento
+
+- Link mágico sem senha; o token é validado no servidor e guardado em cookie HttpOnly, SameSite=Lax e Secure em HTTPS. O fragmento de autenticação é removido imediatamente da URL. A sessão dura até uma hora, limitada pela validade do token Supabase; ao expirar é solicitado novo link. Não há refresh token no navegador.
+- Toda consulta verifica o usuário no Supabase, seu acesso habilitado e seu papel no banco. Clientes precisam de vínculo; administradores globais podem selecionar qualquer empresa. Consultas operacionais sempre filtram a empresa no servidor. Não há acesso direto do navegador ao banco.
+- Faturas, relatórios, exceções e histórico têm paginação de 50 registros. Busca, status e indicadores são da página atual, conforme indicado na tela.
+- Atualização a cada 30 segundos com aba visível; o modal de revisão suspende atualização para preservar a leitura.
+- `completed` significa processamento concluído, podendo conter exceções. `needs_review` significa falha de processamento. `blocked` e `ignored` também são apresentados para não esconder registros existentes.
+- Revisar registra uma observação sem apagar exceções nem alterar automaticamente o status. Reenviar é permitido somente para `needs_review` ou `blocked` de empresa ativa. A operação verifica o estado com bloqueio de linha e registra a ação na mesma transação. O worker reutiliza extrações e relatórios já salvos.
+- Relatórios podem ser inspecionados e baixados em JSON. Os PDFs originais continuam privados no armazenamento; download de PDF não faz parte desta versão.
+- O limite adicional de pedidos de link é por endereço de conexão, em memória por instância. Em proxy reverso, compartilha o limite entre clientes; configurar rate limiting de borda antes de escala. O Supabase também aplica seus limites de envio.
+
+## Verificação
+
+`npm run typecheck`, `npm test`, `npm run build`. Os testes do painel verificam sessão, isolamento entre empresas, CSRF, cookie, paginação, notas obrigatórias e conflitos. Para banco real, executar a migração e os testes SQL transacionais em ambiente de homologação antes de ativar clientes.
+
+## Idioma e acesso administrativo
+
+A interface, as mensagens da API e a demonstração usam inglês americano (`en-US`), valores em USD e datas no padrão americano. Os horários seguem o fuso do navegador. As notas digitadas e os documentos dos clientes preservam seu conteúdo original. O template de e-mail do Supabase também deve ser configurado em inglês na ativação.
+
+O papel de administrador global está implementado em `audit_admins`, com escrita reservada ao backend. Não usa metadados editáveis do usuário. As verificações são refeitas a cada solicitação; desabilitar o acesso invalida o uso de uma sessão já existente na próxima solicitação. A restrição também vale para as políticas RLS de leitura dos clientes.
+
+## Administração
+
+- **Companies:** listar, cadastrar, editar nome, ativar, pausar ou desativar e abrir a operação do cliente. Empresas novas começam inativas; o alias de recebimento é definido na criação e preservado na edição.
+- **Users & access:** listar apenas usuários vinculados a este produto, cadastrar por e-mail, conceder/remover acesso a empresas, habilitar/desabilitar acesso ao painel e atribuir/remover o papel de administrador global.
+- **Admin activity:** histórico de mudanças com autor, data, empresa/usuário afetado e dados da ação. O histórico não tem operação de edição ou exclusão no painel.
+- **Operação do cliente:** o administrador usa seu próprio login. Um aviso identifica a empresa e o acesso administrativo. Revisões e reenvios registram e-mail, ID e papel do autor, visíveis no histórico de revisões do cliente.
+- Nenhum e-mail é enviado ao clicar em Add user. O backend cria/reutiliza a identidade no Supabase Auth e atribui o acesso. O usuário solicita o link mágico na tela de login. Configure em inglês os templates Magic Link e Confirm Signup do Supabase.
+- A criação da identidade Auth e a atribuição de acesso são duas operações. Se a segunda falhar, a identidade fica sem o novo vínculo. Repetir com o mesmo e-mail completa o cadastro sem recriar a identidade. Nenhum acesso é concedido antes da transação de vínculo.
+- Não há exclusão permanente de empresas ou usuários; use status da empresa ou bloqueio de acesso para preservar documentos e histórico. Bloquear um usuário afeta este painel, sem modificar sua conta em outros produtos que compartilhem o projeto Supabase.
+- Um administrador não pode desabilitar a própria conta nem remover o próprio papel administrativo. As alterações administrativas são serializadas no banco para proteger essas regras.
+- As listagens têm páginas de 50 registros. A lista de empresas na gestão de usuários carrega todas as páginas para não ocultar empresas além da primeira página.
+
+## Demonstrações locais
+
+`node scripts/preview-portal.cjs` abre o cliente em `http://127.0.0.1:3101`.
+
+`node scripts/preview-portal.cjs --admin` abre a administração em `http://127.0.0.1:3102`.
+
+Ambas usam dados fictícios em memória, escutam apenas em loopback e não acessam banco, e-mail ou serviços de processamento. Alterações desaparecem ao reiniciar.
+
+## Testes de banco isolado
+
+`node scripts/check-db-isolated.cjs` cria um PostgreSQL temporário, aplica todas as migrações e executa os testes de isolamento, painel e administração. Precisa dos executáveis PostgreSQL instalados; `AUDIT_PG_BIN` pode indicar o diretório. O teste usa uma estrutura mínima de Supabase Auth para validar o SQL e não substitui o teste de entrega de link mágico no Supabase real. Ao finalizar, encerra o servidor temporário e remove os dados.
