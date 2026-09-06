@@ -1,0 +1,21 @@
+export interface ReportException {
+  invoice_id:      string;
+  tipo_regra:      string;
+  rule_label:      string;
+  valor_envolvido: number | null;
+  descricao:       string;
+  source_reference: { file: string; page: number | null };
+  metadata:        Record<string, unknown>;
+}
+
+export interface AuditReport {
+  tenant_id?: string;
+  skipped_files?: string[];
+  warnings?: string[];
+  run_id:                   string;
+  generated_at:             string;
+  total_invoices_processed: number;
+  total_exceptions:         number;
+  valor_total_under_review: number;
+  exceptions:               ReportException[];
+}
