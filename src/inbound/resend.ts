@@ -1,6 +1,7 @@
 import { z } from 'zod';
 export const MAX_PDF_BYTES=20*1024*1024;
 const Attachment=z.object({id:z.string().uuid(),filename:z.string().nullable(),content_type:z.string(),size:z.number().int().nonnegative(),download_url:z.string().url()});
+const TRUSTED_ATTACHMENT_HOSTS=new Set(['inbound-cdn.resend.com','cdn.resend.app']);
 export type Attachment=z.infer<typeof Attachment>;
 export async function limitedBody(response:Response,limit:number):Promise<Buffer> {
  if(!response.ok || !response.body)throw new Error('RESEND_DOWNLOAD_FAILED');
@@ -33,7 +34,7 @@ export class ResendReceivingClient {
   if(attachment.size>MAX_PDF_BYTES)throw new Error('ATTACHMENT_TOO_LARGE');
   const url=new URL(attachment.download_url);
   // Signed download URLs come from the authenticated Resend API, never from email text.
-  if(url.protocol!=='https:' || url.hostname!=='inbound-cdn.resend.com' || url.username || url.password || (url.port && url.port!=='443')){
+  if(url.protocol!=='https:' || !TRUSTED_ATTACHMENT_HOSTS.has(url.hostname) || url.username || url.password || (url.port && url.port!=='443')){
    console.error('[resend] Rejected attachment URL',JSON.stringify({protocol:url.protocol,hostname:url.hostname,port:url.port||null}));
    throw new Error('UNTRUSTED_ATTACHMENT_HOST');
   }
