@@ -130,3 +130,7 @@ Validação: 108 testes automatizados e compilação aprovados; migração e tes
 A entrada Resend e a fila de processamento estão implementadas, usando Cloudflare R2 privado para PDFs e Supabase para fila e metadados. Aguardam implantação em `api.audit.aiolympian.com` e migração 003 no Supabase. Guia completo: [EasyPanel, R2 e Resend](docs/easypanel-resend.md). Execute `npm run start:server` para o servidor; o comando `npm start` continua sendo a auditoria manual. `WORKER_ENABLED=false` aceita eventos sem iniciar extração paga.
 
 Validação atual: 132 testes passaram. Entrega de relatório por e-mail, Stripe e interface continuam pendentes.
+
+## Painel do cliente
+
+O servidor inclui um painel em `/` com link mágico, faturas, relatórios, exceções e histórico por empresa. Revisões e reenvios são registrados de forma transacional. Consulte [a configuração e os limites do painel](docs/customer-portal.md). Para conferir com dados fictícios, execute `node scripts/preview-portal.cjs` e abra `http://127.0.0.1:3101`.

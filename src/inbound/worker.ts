@@ -46,8 +46,13 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   // Duplicate-only runs are kept in the job result even when no new audit_run is needed.
   if(attachments.length!==pdfs.length)report.warnings?.push(`${attachments.length-pdfs.length} non-PDF attachments were not processed.`);
   await repository.finish(job,'completed',report,null);
- }catch{
+ }catch(error){
   // A failed/uncertain paid call is never automatically repeated. Review before requeueing.
+  const detail=error instanceof Error?error.message:'unknown_error';
+  const status=typeof error==='object' && error!==null && '$metadata' in error
+   ? (error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode
+   : undefined;
+  console.error('[worker] Job failed',JSON.stringify({jobId:job.id,stage:detail,status}));
   await repository.finish(job,'needs_review',null,'PROCESSING_FAILED');
  }finally{if(dir)await rm(dir,{recursive:true,force:true});}
 }

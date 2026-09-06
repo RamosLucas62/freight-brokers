@@ -14,6 +14,10 @@ describe('Resend receiving',()=>{
   expect(result.toString()).toContain('%PDF');expect(request.mock.calls[0][1].headers).toBeUndefined();
   expect(request.mock.calls[0][1].redirect).toBe('error');
  });
+ it('accepts the current Resend attachment CDN host',async()=>{
+  const request=vi.fn().mockResolvedValue(new Response('%PDF-1.4 test'));
+  await expect(new ResendReceivingClient('secret',request).download({...attachment,download_url:'https://cdn.resend.app/file?signature=test'})).resolves.toBeTruthy();
+ });
  it.each(['http://inbound-cdn.resend.com/a','https://127.0.0.1/a','https://inbound-cdn.resend.com.evil.com/a','https://user:pass@inbound-cdn.resend.com/a'])('rejects download host %s',async url=>{
   const request=vi.fn();await expect(new ResendReceivingClient('s',request).download({...attachment,download_url:url})).rejects.toThrow('UNTRUSTED');expect(request).not.toHaveBeenCalled();
  });

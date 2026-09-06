@@ -11,10 +11,20 @@ for (const file of files) {
  sql += `SELECT NOT EXISTS (SELECT 1 FROM public.audit_schema_migrations WHERE name='${name}') AS apply_migration \\gset\n\\if :apply_migration\n`;
  sql += readFileSync(join(root, 'db', file), 'utf8') + `\nINSERT INTO public.audit_schema_migrations(name) VALUES ('${name}');\n\\endif\n`;
 }
-if (check) sql += readFileSync(join(root, 'tests/db/tenant-isolation.sql'), 'utf8') + '\nROLLBACK;\n';
+if (check) sql += readFileSync(join(root, 'tests/db/tenant-isolation.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/customer-portal.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/global-admin.sql'), 'utf8') + '\nROLLBACK;\n';
 else sql += '\nCOMMIT;\n';
+// libpq does not expand a URI supplied through PGDATABASE consistently.
+// Split it into environment fields so credentials never appear in process arguments.
+let connection;
+try {
+ const uri = new URL(process.env.DATABASE_URL);
+ if (!['postgres:', 'postgresql:'].includes(uri.protocol) || !uri.hostname) throw new Error();
+ connection = { PGHOST: uri.hostname, PGPORT: uri.port || '5432',
+  PGUSER: decodeURIComponent(uri.username), PGPASSWORD: decodeURIComponent(uri.password),
+  PGDATABASE: decodeURIComponent(uri.pathname.slice(1)) };
+} catch { console.error('DATABASE_URL must be a valid PostgreSQL connection URI.'); process.exit(1); }
 const result = spawnSync('psql', ['-X', '--no-password', '-v', 'ON_ERROR_STOP=1'], {
- input: sql, encoding: 'utf8', env: { ...process.env, PGDATABASE: process.env.DATABASE_URL, PGCONNECT_TIMEOUT: '15', PGSSLMODE: 'require' },
+ input: sql, encoding: 'utf8', env: { ...process.env, ...connection, PGCONNECT_TIMEOUT: '15', PGSSLMODE: 'require' },
 });
 if (result.status !== 0 || result.error) {
  // Do not print the connection URI or credentials embedded in driver diagnostics.

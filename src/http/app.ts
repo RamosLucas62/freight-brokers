@@ -1,4 +1,5 @@
 import {createServer} from 'node:http';
+import {dashboard} from '../dashboard/handler.js';
 import {Webhook} from 'svix';
 import {ReceivedEvent} from '../inbound/events.js';
 export interface HttpDependencies {
@@ -9,6 +10,7 @@ export interface HttpDependencies {
 export function createApp(deps:HttpDependencies) {
  const webhook=new Webhook(deps.secret);
  const server=createServer(async(req,res)=>{
+  if(await dashboard(req,res))return;
   const respond=(code:number,body:unknown)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
   if(req.method==='GET' && req.url==='/healthz'){respond(200,{status:'ok'});return;}
   if(req.method==='GET' && req.url==='/readyz'){
