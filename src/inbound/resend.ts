@@ -33,7 +33,10 @@ export class ResendReceivingClient {
   if(attachment.size>MAX_PDF_BYTES)throw new Error('ATTACHMENT_TOO_LARGE');
   const url=new URL(attachment.download_url);
   // Signed download URLs come from the authenticated Resend API, never from email text.
-  if(url.protocol!=='https:' || url.hostname!=='inbound-cdn.resend.com' || url.username || url.password || (url.port && url.port!=='443'))throw new Error('UNTRUSTED_ATTACHMENT_HOST');
+  if(url.protocol!=='https:' || url.hostname!=='inbound-cdn.resend.com' || url.username || url.password || (url.port && url.port!=='443')){
+   console.error('[resend] Rejected attachment URL',JSON.stringify({protocol:url.protocol,hostname:url.hostname,port:url.port||null}));
+   throw new Error('UNTRUSTED_ATTACHMENT_HOST');
+  }
   const r=await this.request(url,{redirect:'error',signal:AbortSignal.timeout(30000)});
   const bytes=await limitedBody(r,MAX_PDF_BYTES);
   if(!bytes.subarray(0,1024).includes(Buffer.from('%PDF-')))throw new Error('INVALID_PDF');
