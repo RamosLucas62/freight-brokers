@@ -6,4 +6,6 @@
 !src/**
 !public/
 !public/**
+!scripts/
+!scripts/**
 !Dockerfile
