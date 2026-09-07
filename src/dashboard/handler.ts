@@ -12,6 +12,7 @@ import {verifyTurnstile} from '../security/turnstile.js';
 import {readBody,securityHeaders,HttpError} from '../security/http.js';
 import {createHash,createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 import {sendSecurityEmail} from '../notifications/security.sender.js';
+import {plans,planFromMetadata,periodFromMetadata} from '../billing/plans.js';
 
 const uuid=z.string().uuid();
 async function body(req:IncomingMessage) {
@@ -86,20 +87,22 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  send(200,{ok:true});return true;
  }
  if(url.pathname==='/api/portal/checkout'&&req.method==='POST'){
- const input=z.object({email:z.string().email().max(254),turnstile_token:z.string().max(4096).optional()}).parse(await body(req));
+ const input=z.object({email:z.string().email().max(254),plan:z.enum(['core','scale']),period:z.enum(['monthly','semiannual','annual']),turnstile_token:z.string().max(4096).optional()}).parse(await body(req));
  if(!(await take({scope:'checkout-ip',limit:5,windowSeconds:3600,failClosed:true})))return true;
  if(!(await take({scope:'checkout-email',key:privacyKey(input.email),limit:3,windowSeconds:86400,failClosed:true})))return true;
  if(!(await verifyTurnstile(input.turnstile_token,ip))){send(403,{error:'Security verification failed. Please refresh and try again.'});return true;}
- try{const session=await createCheckoutSession(input.email.toLowerCase());send(200,{url:session.url});}
+ try{const session=await createCheckoutSession(input.email.toLowerCase(),input.plan,input.period);send(200,{url:session.url});}
  catch{send(503,{error:'Checkout is still being configured. Contact your account administrator.'});}
  return true;
  }
  if(url.pathname==='/api/portal/onboarding'&&req.method==='POST'){
  if(!(await take({scope:'onboarding-ip',limit:5,windowSeconds:3600,failClosed:true})))return true;
  const input=z.object({session_id:z.string().startsWith('cs_').max(255),company_name:z.string().trim().min(2).max(200),email:z.string().email().max(254),
-  timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(20)}).parse(await body(req));
+  timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(500)}).parse(await body(req));
  const checkout=await retrieveCheckoutSession(input.session_id);
  if(checkout.payment_status!=='paid'||checkout.status!=='complete'){send(402,{error:'Payment is not complete yet.'});return true;}
+ const selectedPlan=planFromMetadata(checkout.metadata?.plan_code);const selectedPeriod=periodFromMetadata(checkout.metadata?.billing_period);
+ if(input.report_emails.length>plans[selectedPlan].maxRecipients){send(409,{error:`The ${plans[selectedPlan].name} plan supports up to ${plans[selectedPlan].maxRecipients} report recipients.`});return true;}
  const email=input.email.toLowerCase();
  if(checkout.customer_details?.email?.toLowerCase()!==email){send(403,{error:'Use the same email address used during checkout.'});return true;}
  const slugBase=input.company_name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,45)||'customer';
@@ -118,6 +121,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  }
  if(result?.error)throw result.error;
  const onboardTenant=String(result?.data?.tenant_id??'');
+ const assigned=await db.rpc('assign_billing_plan',{p_tenant:onboardTenant,p_session_id:input.session_id,p_plan:selectedPlan,p_period:selectedPeriod});if(assigned.error)throw assigned.error;
  const owner=await db.rpc('secure_onboarding_owner',{p_tenant:onboardTenant,p_user:userId});if(owner.error)throw owner.error;
  const requested=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];if(!requested.includes(email))requested.unshift(email);
  const contacts=confirmationContacts(requested);
@@ -209,24 +213,30 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(!isAdmin&&!membership.data?.some(m=>m.tenant_id===tenant)){send(403,{error:'You do not have access to this company.'});return true;}
  if(!(await take({scope:'authenticated-user-minute',key:user.user.id,limit:120,windowSeconds:60}))||!(await take({scope:'authenticated-tenant-minute',key:tenant,limit:300,windowSeconds:60})))return true;
  if(url.pathname==='/api/portal/settings'&&req.method==='GET'){
-  const [settings,contacts,billing,senders]=await Promise.all([
+  const monthStart=new Date();monthStart.setUTCDate(1);monthStart.setUTCHours(0,0,0,0);
+  const [settings,contacts,billing,senders,usage]=await Promise.all([
    db.from('audit_notification_settings').select('timezone,daily_hour,daily_enabled,monthly_enabled,immediate_enabled,immediate_threshold').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_report_contacts').select('email,verified_at').eq('tenant_id',tenant).eq('enabled',true).order('email'),
-   db.from('audit_billing_customers').select('billing_email,status,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at').eq('tenant_id',tenant).maybeSingle(),
+   db.from('audit_billing_customers').select('billing_email,status,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_inbound_sender_rules').select('sender_email').eq('tenant_id',tenant).eq('enabled',true).order('sender_email'),
+   db.from('audit_invoice_usage').select('id',{count:'exact',head:true}).eq('tenant_id',tenant).gte('created_at',monthStart.toISOString()),
   ]);
-  if(settings.error||contacts.error||billing.error||senders.error)throw new Error('Settings lookup failed');
+  if(settings.error||contacts.error||billing.error||senders.error||usage.error)throw new Error('Settings lookup failed');
   const bill=billing.data;
   const tenantRole=membership.data?.find(m=>m.tenant_id===tenant)?.role;
   send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
-   billing:bill?{status:bill.status,paused_until:bill.paused_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
+   billing:bill?{status:bill.status,paused_until:bill.paused_until,payment_grace_until:bill.payment_grace_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
+    plan_code:bill.plan_code,billing_period:bill.billing_period,included_invoices:bill.included_invoices,overage_unit_amount_cents:bill.overage_unit_amount_cents,usage_count:usage.count??0,
     deletion_scheduled_at:bill.deletion_scheduled_at,can_manage:!isAdmin&&bill.billing_email===user.user.email?.toLowerCase(),
     discount_available:!bill.retention_discount_used_at,pause_available:!bill.pause_used_at||new Date(bill.pause_used_at).getTime()<Date.now()-365*86400000}:null});return true;
  }
  if(url.pathname==='/api/portal/settings/notifications'&&req.method==='POST'){
   if(!requireMfa())return true;
   if(!(await take({scope:'settings-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true}))||!(await take({scope:'settings-tenant',key:tenant,limit:10,windowSeconds:600,failClosed:true})))return true;
-  const input=z.object({timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(20),inbound_senders:z.array(z.string().email().max(254)).min(1).max(50)}).parse(await body(req));
+  const input=z.object({timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(500),inbound_senders:z.array(z.string().email().max(254)).min(1).max(500)}).parse(await body(req));
+  const planRow=await serviceDb.from('audit_billing_customers').select('plan_code').eq('tenant_id',tenant).maybeSingle();if(planRow.error)throw planRow.error;
+  const plan=plans[planFromMetadata(planRow.data?.plan_code)];
+  if(input.report_emails.length>plan.maxRecipients||input.inbound_senders.length>plan.maxSenders){send(409,{error:`Your ${plan.name} plan supports up to ${plan.maxRecipients} report recipients and ${plan.maxSenders} invoice sender${plan.maxSenders===1?'':'s'}.`});return true;}
   const emails=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];const contacts=confirmationContacts(emails);
   const saved=await customerDb.rpc('portal_save_security_settings',{p_tenant:tenant,p_timezone:input.timezone,p_contacts:contacts.map(({email,token_hash})=>({email,token_hash})),p_senders:[...new Set(input.inbound_senders.map(value=>value.toLowerCase()))],p_ip_fingerprint:privacyKey(ip).slice(0,32)});
   if(saved.error){send(409,{error:'Check the time zone and email addresses, then try again.'});return true;}
@@ -269,6 +279,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(action&&req.method==='POST'){
  if(!(await take({scope:'mutation-user-minute',key:user.user.id,limit:30,windowSeconds:60,failClosed:true})))return true;
  const job=uuid.parse(action[1]);const {note}=z.object({note:z.string().trim().min(5).max(2000)}).parse(await body(req));
+ if(action[2]==='retry'){const currentPlan=await serviceDb.from('audit_billing_customers').select('plan_code').eq('tenant_id',tenant).maybeSingle();if(currentPlan.data?.plan_code!=='scale'){send(403,{error:'Exception reprocessing is available on the Scale plan.'});return true;}}
  const {error}=await serviceDb.rpc('portal_job_action',{p_user:user.user.id,p_tenant:tenant,p_job:job,p_action:action[2],p_note:note});
  if(error){send(409,{error:'Unable to save. Check the current case status and try again.'});return true;}
  send(200,{ok:true});return true;

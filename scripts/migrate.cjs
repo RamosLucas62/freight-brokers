@@ -11,7 +11,7 @@ for (const file of files) {
  sql += `SELECT NOT EXISTS (SELECT 1 FROM public.audit_schema_migrations WHERE name='${name}') AS apply_migration \\gset\n\\if :apply_migration\n`;
  sql += readFileSync(join(root, 'db', file), 'utf8') + `\nINSERT INTO public.audit_schema_migrations(name) VALUES ('${name}');\n\\endif\n`;
 }
-if (check) sql += readFileSync(join(root, 'tests/db/tenant-isolation.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/customer-portal.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/global-admin.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/notifications.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/subscription-lifecycle.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/security-hardening.sql'), 'utf8') + '\nROLLBACK;\n';
+if (check) sql += readFileSync(join(root, 'tests/db/tenant-isolation.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/customer-portal.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/global-admin.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/notifications.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/subscription-lifecycle.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/security-hardening.sql'), 'utf8') + '\n' + readFileSync(join(root, 'tests/db/usage-billing.sql'), 'utf8') + '\nROLLBACK;\n';
 else sql += '\nCOMMIT;\n';
 // libpq does not expand a URI supplied through PGDATABASE consistently.
 // Split it into environment fields so credentials never appear in process arguments.

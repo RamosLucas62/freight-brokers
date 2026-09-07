@@ -1,8 +1,9 @@
 import Stripe from 'stripe';
 import {privacyKey} from '../security/rate-limit.js';
 import {readResponseBody} from '../security/http.js';
+import {priceId,type BillingPeriod,type PlanCode} from './plans.js';
 
-export type StripeCheckoutSession={id:string;url?:string|null;payment_status?:string;status?:string;customer?:string;subscription?:string;customer_details?:{email?:string|null}};
+export type StripeCheckoutSession={id:string;url?:string|null;payment_status?:string;status?:string;customer?:string;subscription?:string;customer_details?:{email?:string|null};metadata?:Record<string,string>} ;
 
 function config(){
  const secret=process.env.STRIPE_SECRET_KEY;
@@ -15,8 +16,8 @@ async function stripe(path:string,init:RequestInit={}){
  if(!response.ok)throw new Error(typeof data.error?.message==='string'?data.error.message:'STRIPE_REQUEST_FAILED');
  return data;
 }
-export async function createCheckoutSession(email:string){
- const price=process.env.STRIPE_PRICE_ID;
+export async function createCheckoutSession(email:string,plan:PlanCode,period:BillingPeriod){
+ const price=priceId(plan,period);
  const origin=process.env.PORTAL_URL;
  if(!price||!origin)throw new Error('STRIPE_NOT_CONFIGURED');
  const body=new URLSearchParams({
@@ -27,8 +28,12 @@ export async function createCheckoutSession(email:string){
   success_url:new URL('/onboarding?session_id={CHECKOUT_SESSION_ID}',origin).href,
   cancel_url:new URL('/',origin).href,
   allow_promotion_codes:'true',
+  'metadata[plan_code]':plan,
+  'metadata[billing_period]':period,
+  'subscription_data[metadata][plan_code]':plan,
+  'subscription_data[metadata][billing_period]':period,
  });
- return stripe('/checkout/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`checkout-${privacyKey(email).slice(0,48)}`}}) as Promise<StripeCheckoutSession>;
+ return stripe('/checkout/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`checkout-${privacyKey(`${email}:${plan}:${period}`).slice(0,48)}`}}) as Promise<StripeCheckoutSession>;
 }
 export async function retrieveCheckoutSession(id:string){
  return stripe('/checkout/sessions/'+encodeURIComponent(id)) as Promise<StripeCheckoutSession>;
@@ -53,6 +58,16 @@ export async function pauseSubscriptionOneMonth(subscriptionId:string,tenantId:s
 export async function cancelSubscriptionAtPeriodEnd(subscriptionId:string,tenantId:string){
  const body=new URLSearchParams({cancel_at_period_end:'true'});
  return stripe('/subscriptions/'+encodeURIComponent(subscriptionId),{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`cancel-at-period-end-${tenantId}`}});
+}
+export async function createOverageInvoice(input:{settlementId:string;customerId:string;subscriptionId:string;usageMonth:string;overageCount:number;unitAmountCents:number}){
+ const amount=input.overageCount*input.unitAmountCents;
+ const item=new URLSearchParams({customer:input.customerId,subscription:input.subscriptionId,amount:String(amount),currency:'usd',
+  description:`${input.overageCount} additional invoice${input.overageCount===1?'':'s'} · ${input.usageMonth}`,
+  'metadata[usage_settlement_id]':input.settlementId,'metadata[usage_month]':input.usageMonth,'metadata[overage_count]':String(input.overageCount)});
+ await stripe('/invoiceitems',{method:'POST',body:item,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`overage-item-${input.settlementId}`}});
+ const invoice=new URLSearchParams({customer:input.customerId,subscription:input.subscriptionId,collection_method:'charge_automatically',auto_advance:'true',pending_invoice_item_behavior:'include',
+  description:`Freight Audit monthly overage · ${input.usageMonth}`,'metadata[usage_settlement_id]':input.settlementId});
+ return stripe('/invoices',{method:'POST',body:invoice,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`overage-invoice-${input.settlementId}`}}) as Promise<{id:string}>;
 }
 export function verifyStripeSignature(raw:string,header:string|undefined){
  const secret=process.env.STRIPE_WEBHOOK_SECRET;

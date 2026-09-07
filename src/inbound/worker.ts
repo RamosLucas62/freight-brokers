@@ -9,6 +9,7 @@ import {getCarrier} from '../carrier/index.js';
 import {runAuditPipeline} from '../pipeline/audit.pipeline.js';
 import {ExtractionResultSchema} from '../extraction/schema.js';
 import {scanPdf} from '../security/pdf.js';
+import {createHash} from 'node:crypto';
 
 export async function processJob(job:repository.InboundJob,client:ResendReceivingClient) {
  let dir:string|undefined;
@@ -26,13 +27,14 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   if(!pdfs.length){await repository.finish(job,'ignored',null,'NO_PDF_ATTACHMENTS');return;}
   if(pdfs.reduce((sum,a)=>sum+a.size,0)>40*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
   dir=await mkdtemp(join(tmpdir(),'audit-email-'));
-  const paths:string[]=[];const labels:Record<string,string>={};let bytesTotal=0;
+  const paths:string[]=[];const labels:Record<string,string>={};const hashes=new Map<string,string>();let bytesTotal=0;
   // Download and persist every PDF before any paid extraction.
   for(const attachment of pdfs){
    const bytes=await client.download(attachment);bytesTotal+=bytes.length;
    if(bytesTotal>40*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
    await scanPdf(bytes);
    await repository.saveAttachment(job,attachment.id,attachment.filename??'invoice.pdf',bytes);
+   hashes.set(attachment.id,createHash('sha256').update(bytes).digest('hex'));
    const path=join(dir,`${attachment.id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);
    labels[path]=`resend/${job.email_id}/${attachment.id}.pdf`;
   }
@@ -42,9 +44,10 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    getCarrier,store,extractor:{async extract(path){
     const id=basename(path,'.pdf');
     const stored=cached.get(id);
-    if(stored)return ExtractionResultSchema.parse(stored);
+    if(stored){const parsed=ExtractionResultSchema.parse(stored);await repository.recordBillableInvoice(job,id,hashes.get(id)!);return parsed;}
     const result=await extractor.extract(path);
     await repository.cacheExtraction(job,id,result);
+    await repository.recordBillableInvoice(job,id,hashes.get(id)!);
     return result;
    }},
   });
