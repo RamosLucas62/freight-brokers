@@ -1,4 +1,5 @@
 import type { ICarrierLookupProvider, CarrierLookupInput, CarrierLookupResult, AuditContext } from '../types/carrier.types.js';
+import {readResponseBody} from '../security/http.js';
 
 export function mapFmcsaResponse(data: unknown, input: CarrierLookupInput): CarrierLookupResult {
   const content = (data as { content?: unknown })?.content;
@@ -36,6 +37,6 @@ export class FmcsaCarrierProvider implements ICarrierLookupProvider {
       response = await this.request(url, { signal: AbortSignal.timeout(30_000), redirect: 'error' });
     } catch { throw new Error('FMCSA request failed or timed out.'); }
     if (!response.ok) throw new Error(`FMCSA lookup failed (HTTP ${response.status}).`);
-    return mapFmcsaResponse(await response.json(), input);
+    return mapFmcsaResponse(JSON.parse((await readResponseBody(response,2*1024*1024)).toString('utf8')), input);
   }
 }

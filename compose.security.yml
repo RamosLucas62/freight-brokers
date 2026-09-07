@@ -1,0 +1,47 @@
+services:
+  app:
+    build: .
+    env_file: .env
+    ports: ["3000:3000"]
+    depends_on: [redis, pdf-scanner]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [edge, private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 100
+  redis:
+    image: redis:8.10.1-alpine3.23
+    command: ["redis-server","--appendonly","yes","--requirepass","${REDIS_PASSWORD}"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    volumes: ["redis-data:/data"]
+    networks: [private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    pids_limit: 100
+  pdf-scanner:
+    build: ./security/pdf-scanner
+    environment: ["PDF_SCAN_TOKEN=${PDF_SCAN_TOKEN}"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    volumes: ["clamav-data:/var/lib/clamav"]
+    networks: [private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 80
+networks:
+  edge:
+  private:
+    internal: true
+volumes:
+  redis-data:
+  clamav-data:

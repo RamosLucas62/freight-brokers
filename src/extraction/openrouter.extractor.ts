@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { IExtractionProvider } from './extraction.interface.js';
 import type { InvoiceExtractionResult } from '../types/invoice.types.js';
 import { ExtractionResultSchema } from './schema.js';
+import {readResponseBody} from '../security/http.js';
 
 const nullableText = { type: ['string', 'null'] };
 const object = (properties: Record<string, unknown>) => ({
@@ -56,6 +57,9 @@ export class OpenRouterInvoiceExtractor implements IExtractionProvider {
     const key = process.env.OPENROUTER_API_KEY?.trim();
     if (!key) throw new Error('Set OPENROUTER_API_KEY before extracting invoices.');
     const model = process.env.OPENROUTER_MODEL?.trim() || 'google/gemini-2.5-flash';
+    const allowed=(process.env.OPENROUTER_ALLOWED_MODELS??model).split(',').map(value=>value.trim());
+    if(!allowed.includes(model))throw new Error('OPENROUTER_MODEL is not in OPENROUTER_ALLOWED_MODELS.');
+    if(process.env.NODE_ENV==='production'&&process.env.OPENROUTER_DATA_PROCESSING_ACK!=='true')throw new Error('OpenRouter data processing approval is required.');
     const engine = process.env.OPENROUTER_PDF_ENGINE?.trim() || 'native';
     if (!['native', 'mistral-ocr', 'cloudflare-ai'].includes(engine)) throw new Error('Invalid OPENROUTER_PDF_ENGINE. Use native, mistral-ocr or cloudflare-ai.');
     const bytes = await readFile(file);
@@ -67,7 +71,7 @@ export class OpenRouterInvoiceExtractor implements IExtractionProvider {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000),
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, stream: false, max_tokens: 8192,
-          provider: { require_parameters: true },
+          provider: { require_parameters: true, data_collection: 'deny' },
           plugins: [{ id: 'file-parser', pdf: { engine } }],
           response_format: { type: 'json_schema', json_schema: { name: 'freight_invoice', strict: true, schema } },
           messages: [{ role: 'system', content: instructions }, { role: 'user', content: [
@@ -84,7 +88,7 @@ export class OpenRouterInvoiceExtractor implements IExtractionProvider {
     let envelope: z.infer<typeof envelopeSchema>;
     let payload: z.infer<typeof payloadSchema>;
     try {
-      envelope = envelopeSchema.parse(await response.json());
+      envelope = envelopeSchema.parse(JSON.parse((await readResponseBody(response,2*1024*1024)).toString('utf8')));
       if (envelope.choices[0].message.refusal) throw new Error('Refused');
       payload = payloadSchema.parse(JSON.parse(envelope.choices[0].message.content));
     } catch { throw new Error('OpenRouter returned an incomplete, refused or invalid extraction; no invoice accepted.'); }

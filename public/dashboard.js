@@ -8,21 +8,26 @@ const badge=status=>`<span class="badge ${escape(status)}">${escape(status)}</sp
 const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history',settings:'Settings & billing'};
 const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.',settings:'Choose who receives reports and keep your subscription up to date.'};
 let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null,settingsData=null;
+let turnstileWidgets={};
+async function initializeSecurity(){
+ try{const config=await api('security-config');if(!config.turnstile_site_key)return;await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.onload=resolve;script.onerror=reject;document.head.append(script);});turnstileWidgets.login=turnstile.render('#login-turnstile',{sitekey:config.turnstile_site_key});turnstileWidgets.checkout=turnstile.render('#checkout-turnstile',{sitekey:config.turnstile_site_key});}catch{$('login-message').textContent='Security verification could not be loaded. Refresh the page.';}
+}
+const turnstileToken=name=>globalThis.turnstile&&turnstileWidgets[name]!=null?turnstile.getResponse(turnstileWidgets[name]):undefined;
 async function api(path,options={}){
- const response=await fetch('/api/portal/'+path,{...options,headers:{'Content-Type':'application/json',...options.headers}});
+ const csrfEntry=document.cookie.split(';').map(value=>value.trim()).find(value=>value.startsWith('audit_csrf=')||value.startsWith('__Host-audit_csrf='));const csrf=csrfEntry?.slice(csrfEntry.indexOf('=')+1);const response=await fetch('/api/portal/'+path,{...options,headers:{'Content-Type':'application/json',...(csrf?{'X-CSRF-Token':decodeURIComponent(csrf)}:{}),...options.headers}});
  const data=await response.json();
  if(!response.ok){if(response.status===401){$('portal').hidden=true;$('login').hidden=false;$('login-message').textContent=data.error;}throw new Error(data.error||'Unable to load data.');}return data;
 }
 function message(text){$('message').textContent=text;$('message').hidden=!text;}
 $('login-form').addEventListener('submit',async event=>{
  event.preventDefault();const button=event.submitter;button.disabled=true;$('login-message').textContent='Requesting your sign-in link…';
- try{await api('login',{method:'POST',body:JSON.stringify({email:$('email').value.trim()})});$('login-message').textContent='If this email is registered, you will receive a sign-in link. Please also check your spam folder.';}
- catch(error){$('login-message').textContent=error.message;}finally{button.disabled=false;}
+ try{await api('login',{method:'POST',body:JSON.stringify({email:$('email').value.trim(),turnstile_token:turnstileToken('login')})});$('login-message').textContent='If this email is registered, you will receive a sign-in link. Please also check your spam folder.';}
+ catch(error){$('login-message').textContent=error.message;}finally{if(globalThis.turnstile&&turnstileWidgets.login!=null)turnstile.reset(turnstileWidgets.login);button.disabled=false;}
 });
 $('checkout-form').addEventListener('submit',async event=>{
  event.preventDefault();const button=event.submitter;button.disabled=true;$('checkout-message').textContent='Opening secure checkout…';
- try{const data=await api('checkout',{method:'POST',body:JSON.stringify({email:$('checkout-email').value.trim()})});location.assign(data.url);}
- catch(error){$('checkout-message').textContent=error.message;}finally{button.disabled=false;}
+ try{const data=await api('checkout',{method:'POST',body:JSON.stringify({email:$('checkout-email').value.trim(),turnstile_token:turnstileToken('checkout')})});location.assign(data.url);}
+ catch(error){$('checkout-message').textContent=error.message;}finally{if(globalThis.turnstile&&turnstileWidgets.checkout!=null)turnstile.reset(turnstileWidgets.checkout);button.disabled=false;}
 });
 $('onboarding-form').addEventListener('submit',async event=>{
  event.preventDefault();const params=new URLSearchParams(location.search);const button=event.submitter;button.disabled=true;$('onboarding-message').textContent='Creating your account…';
@@ -35,10 +40,15 @@ $('onboarding-form').addEventListener('submit',async event=>{
 });
 async function initialize(){
  try{
+ await initializeSecurity();
+ if(location.pathname==='/verify-recipient'){
+  const token=new URLSearchParams(location.search).get('token');if(!token)throw new Error('This confirmation link is invalid.');
+  const result=await api('recipient/confirm',{method:'POST',body:JSON.stringify({token})});history.replaceState(null,'','/');$('login-message').textContent=`${result.email} is confirmed and can now receive reports.`;return;
+ }
  if(location.pathname==='/onboarding'){$('signin-panel').hidden=true;$('onboarding-panel').hidden=false;$('timezone').value=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';$('onboarding-email').addEventListener('input',()=>{if(!$('report-emails').value.trim())$('report-emails').value=$('onboarding-email').value.trim();});return;}
  const hash=new URLSearchParams(location.hash.slice(1));
  if(hash.has('error_description')){history.replaceState(null,'','/');throw new Error('This link has expired or has already been used. Request a new link.');}
- if(hash.has('access_token')){const access_token=hash.get('access_token');history.replaceState(null,'','/');await api('session',{method:'POST',body:JSON.stringify({access_token})});}
+ if(hash.has('access_token')){const access_token=hash.get('access_token'),refresh_token=hash.get('refresh_token');history.replaceState(null,'','/');await api('session',{method:'POST',body:JSON.stringify({access_token,refresh_token})});}
  const me=await api('me');currentUser=me;companies=me.companies??[];$('login').hidden=true;$('portal').hidden=false;$('account-email').textContent=me.email;
  if(me.is_admin){adminPortal.start(me,{api,onOpen:openCompany,onNavigate:()=>{requestId++;$('refresh').disabled=false;message('');}});return;}
  $('company').innerHTML=companies.map(c=>`<option value="${escape(c.id)}">${escape(c.name)}</option>`).join('');
@@ -84,23 +94,34 @@ function render(){
 }
 function renderSettings(){
  const data=settingsData;const billing=data.billing;const status=billing?.status??'not linked';
+ const recipients=data.notifications.report_emails??[];const canManageNotifications=data.notifications.can_manage;
  const copy={active:['Active and protected','Invoice auditing and scheduled reports are available.','No action is needed.'],past_due:['Payment needs attention','New invoice processing is paused while Stripe retries the payment.','Update the payment method to restore service.'],paused:['Paused','Your data is preserved while invoice processing is paused.',billing?.paused_until?`Service returns automatically on ${date(billing.paused_until)}.`:'Check your subscription before resuming.'],canceling:['Cancellation scheduled','Service remains available through the paid billing period.','After cancellation, data is held for 30 days before permanent deletion.'],canceled:['Inactive','Invoice processing and reports are no longer available.',billing?.deletion_scheduled_at?`Data is scheduled for deletion on ${date(billing.deletion_scheduled_at)}.`:'Contact support during the recovery window if needed.']}[status]??['Subscription unavailable','We could not find an active subscription for this company.','Contact your account administrator.'];
  $('title').textContent=names.settings;$('breadcrumb').textContent=names.settings;$('subtitle').textContent=subtitles.settings;$('metrics').hidden=true;$('records-panel').hidden=true;$('table-footnote').hidden=true;$('settings-panel').hidden=false;
  $('settings-panel').innerHTML=`<section class="continuity ${escape(status)}"><p class="eyebrow">ACCOUNT CONTINUITY</p><div><span>${badge(status)}</span><h2>${escape(copy[0])}</h2><p>${escape(copy[1])}</p></div><div class="next-action"><small>NEXT ACTION</small><strong>${escape(copy[2])}</strong></div></section>
- <div class="settings-grid"><form id="notification-settings" class="settings-card"><p class="eyebrow">REPORT DELIVERY</p><h3>Notification recipients</h3><p class="muted">Daily reports arrive at 7:00 AM in this company time zone. Enter up to 20 addresses.</p><label for="settings-emails">Email addresses</label><textarea id="settings-emails" required>${escape(data.notifications.report_emails.join('\n'))}</textarea><small class="field-help">Use one address per line, or separate them with commas.</small><label for="settings-timezone">Company time zone</label><input id="settings-timezone" list="timezone-options" required value="${escape(data.notifications.timezone)}"><button class="primary" type="submit">Save notification settings</button><p id="settings-feedback" role="status"></p></form>
+ <div class="settings-grid"><form id="notification-settings" class="settings-card"><p class="eyebrow">REPORT DELIVERY</p><h3>Notification recipients</h3><p class="muted">Daily reports arrive at 7:00 AM in this company time zone. New addresses receive a 30-minute confirmation link.</p><label for="settings-emails">Email addresses</label><textarea id="settings-emails" required ${canManageNotifications?'':'disabled'}>${escape(recipients.map(item=>item.email).join('\n'))}</textarea><ul class="recipient-status">${recipients.map(item=>`<li><span>${escape(item.email)}</span><strong class="${item.verified?'confirmed':'pending'}">${item.verified?'Confirmed':'Confirmation pending'}</strong></li>`).join('')||'<li>No recipients configured</li>'}</ul><label for="inbound-senders">Authorized invoice senders</label><textarea id="inbound-senders" required ${canManageNotifications?'':'disabled'}>${escape((data.notifications.inbound_senders??[]).join('\n'))}</textarea><small class="field-help">Only these exact addresses can submit authenticated PDFs for paid processing.</small><label for="settings-timezone">Company time zone</label><input id="settings-timezone" list="timezone-options" required value="${escape(data.notifications.timezone)}" ${canManageNotifications?'':'disabled'}><button class="primary" type="submit" ${canManageNotifications?'':'disabled'}>Save notification settings</button><p id="settings-feedback" role="status">${canManageNotifications?'':'Only the company owner or billing administrator can change report delivery.'}</p></form>
+ <section class="settings-card"><p class="eyebrow">ACCOUNT SECURITY</p><h3>Authenticator verification</h3><p class="muted">Billing, cancellation, recipient changes and administration require a six-digit authenticator code.</p><div id="mfa-panel"><button id="setup-mfa">${currentUser.aal==='aal2'?'Authenticator verified':'Set up authenticator'}</button></div></section>
  <section class="settings-card"><p class="eyebrow">BILLING</p><h3>Subscription management</h3><p class="muted">Stripe securely manages your card, invoices and billing details.</p><dl><div><dt>Subscription</dt><dd>${badge(status)}</dd></div><div><dt>Billing owner</dt><dd>${billing?.can_manage?'You can manage billing':'Billing owner access required'}</dd></div></dl><button id="manage-billing" ${billing?.can_manage?'':'disabled'}>Change card or view invoices ↗</button><div class="cancel-zone"><strong>Thinking about leaving?</strong><p>Review flexible options before ending service.</p><button id="open-cancel" ${billing?.can_manage&&status==='active'?'':'disabled'}>Review cancellation options</button></div></section></div>`;
  $('notification-settings').addEventListener('submit',saveNotificationSettings);
  $('manage-billing').addEventListener('click',async()=>{try{await billingRequest('portal');}catch(error){message(error.message);}});
  $('open-cancel').addEventListener('click',()=>showCancellation(1));
+ $('setup-mfa').addEventListener('click',setupMfa);
+}
+async function setupMfa(){
+ const panel=$('mfa-panel');panel.textContent='Preparing secure setup…';
+ try{const status=await api('mfa/status');let factor=status.factors.find(item=>item.status==='unverified')??status.factors.find(item=>item.status==='verified');let enrollment;
+  if(!factor||factor.status==='verified'&&status.aal!=='aal2'){if(factor?.status==='verified'){panel.innerHTML=`<p>Enter the current six-digit code to unlock sensitive actions.</p><input id="mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"><button id="verify-mfa">Verify</button>`;}else{enrollment=await api('mfa/enroll',{method:'POST',body:JSON.stringify({friendly_name:'Freight Audit Portal'})});factor={id:enrollment.id,status:'unverified'};panel.innerHTML=`<p>Scan this QR code with your authenticator app, then enter the six-digit code.</p><img alt="Authenticator QR code" src="${escape(enrollment.qr_code)}"><p><small>Manual key: ${escape(enrollment.secret)}</small></p><input id="mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"><button id="verify-mfa">Verify and enable</button>`;}}
+  else{panel.innerHTML='<p>Multi-factor authentication is active for this session.</p>';return;}
+  $('verify-mfa').addEventListener('click',async()=>{try{await api('mfa/verify',{method:'POST',body:JSON.stringify({factor_id:factor.id,code:$('mfa-code').value})});currentUser.aal='aal2';panel.innerHTML='<p>Authenticator verified. Sensitive actions are now unlocked.</p>';}catch(error){panel.insertAdjacentHTML('beforeend',`<p>${escape(error.message)}</p>`);}});
+ }catch(error){panel.textContent=error.message;}
 }
 async function saveNotificationSettings(event){
  event.preventDefault();const button=event.submitter;button.disabled=true;$('settings-feedback').textContent='Saving…';
- try{const report_emails=$('settings-emails').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);await api(`settings/notifications?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:JSON.stringify({timezone:$('settings-timezone').value.trim(),report_emails})});$('settings-feedback').textContent='Notification settings saved.';}
+ try{const report_emails=$('settings-emails').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);const inbound_senders=$('inbound-senders').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);await api(`settings/notifications?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:JSON.stringify({timezone:$('settings-timezone').value.trim(),report_emails,inbound_senders})});$('settings-feedback').textContent='Settings saved. New report addresses must confirm by email.';}
  catch(error){$('settings-feedback').textContent=error.message;}finally{button.disabled=false;}
 }
 async function billingRequest(action){
  const buttons=[...document.querySelectorAll('#settings-panel button,#cancel-dialog button')];buttons.forEach(button=>button.disabled=true);
- try{const result=await api(`billing/${action}?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:'{}'});if(result.url){location.assign(result.url);return;}return result;}
+ try{const key=crypto.randomUUID().replaceAll('-','');const result=await api(`billing/${action}?company=${encodeURIComponent($('company').value)}`,{method:'POST',headers:{'Idempotency-Key':key},body:'{}'});if(result.url){location.assign(result.url);return;}return result;}
  finally{buttons.forEach(button=>button.disabled=false);}
 }
 function showCancellation(step){

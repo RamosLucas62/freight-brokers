@@ -29,4 +29,5 @@ describe('HTTP webhook boundary',()=>{
  it('rejects oversized requests before signature processing',async()=>{
   const r=await fetch(base+'/webhooks/resend',{method:'POST',headers:{'content-type':'application/json'},body:'x'.repeat(256*1024+1)});expect(r.status).toBe(413);expect(enqueue).not.toHaveBeenCalled();
  });
+ it('rejects oversized Stripe webhook bodies before signature processing',async()=>{const r=await fetch(base+'/webhooks/stripe',{method:'POST',headers:{'content-type':'application/json','stripe-signature':'invalid'},body:'x'.repeat(256*1024+1)});expect(r.status).toBe(413);});
 });

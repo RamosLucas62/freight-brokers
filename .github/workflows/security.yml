@@ -1,0 +1,54 @@
+name: Security checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 9 * * 1'
+permissions:
+  actions: read
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm audit --audit-level=high
+      - run: npm run build
+  codeql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with: {languages: javascript-typescript}
+      - uses: github/codeql-action/analyze@v4
+        with: {upload: never, output: codeql-results}
+      - uses: actions/upload-artifact@v4
+        with: {name: codeql-results, path: codeql-results, retention-days: 14}
+  filesystem-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+  container-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t freight-audit:${{ github.sha }} .
+      - run: docker build -t freight-pdf-scanner:${{ github.sha }} security/pdf-scanner
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with: {image-ref: 'freight-audit:${{ github.sha }}', severity: 'HIGH,CRITICAL', ignore-unfixed: true, exit-code: '1'}
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with: {image-ref: 'freight-pdf-scanner:${{ github.sha }}', severity: 'HIGH,CRITICAL', ignore-unfixed: true, exit-code: '1'}

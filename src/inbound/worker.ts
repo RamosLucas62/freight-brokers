@@ -8,6 +8,7 @@ import {extractor} from '../extraction/index.js';
 import {getCarrier} from '../carrier/index.js';
 import {runAuditPipeline} from '../pipeline/audit.pipeline.js';
 import {ExtractionResultSchema} from '../extraction/schema.js';
+import {scanPdf} from '../security/pdf.js';
 
 export async function processJob(job:repository.InboundJob,client:ResendReceivingClient) {
  let dir:string|undefined;
@@ -16,17 +17,21 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   if(previous){await repository.finish(job,'completed',previous,null);return;}
   const store=createAuditStore(job.tenant_id);
   try{await store.assertActive();}catch{await repository.finish(job,'blocked',null,'ACCOUNT_UNAVAILABLE');return;}
-  if(await client.isAutomatic(job.email_id)){await repository.finish(job,'ignored',null,'AUTOMATIC_EMAIL');return;}
+  const metadata=typeof (client as {metadata?:unknown}).metadata==='function'?await client.metadata(job.email_id):{automatic:await client.isAutomatic(job.email_id),from:'unknown@invalid.local',authenticated:true};
+  if(metadata.automatic){await repository.finish(job,'ignored',null,'AUTOMATIC_EMAIL');return;}
+  if(!metadata.authenticated){await repository.finish(job,'blocked',null,'SENDER_AUTHENTICATION_FAILED');return;}
+  if(metadata.from!=='unknown@invalid.local')try{await repository.authorizeInbound(job,metadata.from);}catch{await repository.finish(job,'blocked',null,'SENDER_NOT_AUTHORIZED_OR_QUOTA');return;}
   const attachments=await client.attachments(job.email_id);
   const pdfs=attachments.filter(a=>a.content_type==='application/pdf' || a.filename?.toLowerCase().endsWith('.pdf'));
   if(!pdfs.length){await repository.finish(job,'ignored',null,'NO_PDF_ATTACHMENTS');return;}
-  if(pdfs.reduce((sum,a)=>sum+a.size,0)>50*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
+  if(pdfs.reduce((sum,a)=>sum+a.size,0)>40*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
   dir=await mkdtemp(join(tmpdir(),'audit-email-'));
   const paths:string[]=[];const labels:Record<string,string>={};let bytesTotal=0;
   // Download and persist every PDF before any paid extraction.
   for(const attachment of pdfs){
    const bytes=await client.download(attachment);bytesTotal+=bytes.length;
-   if(bytesTotal>50*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
+   if(bytesTotal>40*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
+   await scanPdf(bytes);
    await repository.saveAttachment(job,attachment.id,attachment.filename??'invoice.pdf',bytes);
    const path=join(dir,`${attachment.id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);
    labels[path]=`resend/${job.email_id}/${attachment.id}.pdf`;

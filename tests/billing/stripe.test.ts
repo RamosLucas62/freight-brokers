@@ -1,5 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {applyRetentionDiscount,cancelSubscriptionAtPeriodEnd,createBillingPortalSession,pauseSubscriptionOneMonth} from '../../src/billing/stripe.js';
+import {verifyStripeSignature} from '../../src/billing/stripe.js';
+import Stripe from 'stripe';
 
 const fetchMock=vi.fn();
 beforeEach(()=>{
@@ -24,3 +26,4 @@ describe('Stripe subscription actions',()=>{
   await cancelSubscriptionAtPeriodEnd('sub_cancel','tenant-1');expect((fetchMock.mock.calls[1][1].body as URLSearchParams).get('cancel_at_period_end')).toBe('true');
  });
 });
+it('uses Stripe official verification and supports rotated signature headers',()=>{const secret='whsec_test_secret';vi.stubEnv('STRIPE_WEBHOOK_SECRET',secret);const payload=JSON.stringify({id:'evt_1',type:'invoice.paid',created:1,data:{object:{subscription:'sub_1'}}});const header=Stripe.webhooks.generateTestHeaderString({payload,secret});expect(verifyStripeSignature(payload,header)).toMatchObject({id:'evt_1',type:'invoice.paid'});expect(()=>verifyStripeSignature(payload+' ',header)).toThrow('STRIPE_SIGNATURE_INVALID');});

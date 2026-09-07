@@ -1,0 +1,6 @@
+import {afterEach,expect,it,vi} from 'vitest';
+import {scanPdf} from '../../src/security/pdf.js';
+
+afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
+it('requires the private scanner to approve a PDF',async()=>{vi.stubEnv('PDF_SCAN_URL','http://scanner.internal:8080');vi.stubEnv('PDF_SCAN_TOKEN','s'.repeat(32));const request=vi.fn(async()=>new Response(JSON.stringify({safe:true,page_count:2}),{status:200}));vi.stubGlobal('fetch',request);await expect(scanPdf(Buffer.from('%PDF-test'))).resolves.toEqual({pageCount:2});expect(request).toHaveBeenCalledWith(new URL('http://scanner.internal:8080/scan'),expect.objectContaining({method:'POST',signal:expect.any(AbortSignal)}));});
+it('rejects a file blocked by the private scanner',async()=>{vi.stubEnv('PDF_SCAN_URL','http://scanner.internal:8080');vi.stubEnv('PDF_SCAN_TOKEN','s'.repeat(32));vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({safe:false,page_count:0,reason:'malware'}),{status:200})));await expect(scanPdf(Buffer.from('%PDF-test'))).rejects.toThrow('PDF_REJECTED_malware');});

@@ -1,10 +1,12 @@
 import {getSupabaseClient} from '../config/supabase.js';
 import {deleteInvoiceObjects} from '../storage/r2.js';
+import {processNextStripeEvent} from './repository.js';
 
 type DeletionJob={id:string;tenant_id:string;attempts:number};
 
 async function maintain(){
  const db=getSupabaseClient();
+ for(let index=0;index<25&&await processNextStripeEvent();index++);
  const resumed=await db.rpc('resume_due_customer_pauses',{});
  if(resumed.error)throw resumed.error;
  const claimed=await db.rpc('claim_due_data_deletion');
