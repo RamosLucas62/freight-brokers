@@ -1,4 +1,4 @@
-import {PutObjectCommand,S3Client} from '@aws-sdk/client-s3';
+import {DeleteObjectsCommand,PutObjectCommand,S3Client} from '@aws-sdk/client-s3';
 
 export interface R2Config {
  accountId:string;
@@ -40,6 +40,14 @@ export async function putInvoiceObject(key:string,bytes:Buffer) {
  await getClient(config).send(new PutObjectCommand({
   Bucket:config.bucket,Key:key,Body:bytes,ContentType:'application/pdf',CacheControl:'private, no-store',
  }));
+}
+
+export async function deleteInvoiceObjects(keys:string[]) {
+ if(!keys.length)return;
+ const config=configFromEnvironment();
+ for(let offset=0;offset<keys.length;offset+=1000){
+  await getClient(config).send(new DeleteObjectsCommand({Bucket:config.bucket,Delete:{Objects:keys.slice(offset,offset+1000).map(Key=>({Key})),Quiet:true}}));
+ }
 }
 
 export function resetR2ClientForTests() { client=undefined; }

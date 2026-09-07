@@ -5,9 +5,9 @@ const money=value=>value==null?'—':new Intl.NumberFormat('en-US',{style:'curre
 const date=value=>value?new Date(value).toLocaleString('en-US',{dateStyle:'short',timeStyle:'short'}):'—';
 const invoiceDate=value=>{if(!value)return '—';const [year,month,day]=value.split('-').map(Number);return new Intl.DateTimeFormat('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}).format(new Date(year,month-1,day));};
 const badge=status=>`<span class="badge ${escape(status)}">${escape(status)}</span>`;
-const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history'};
-const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.'};
-let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null;
+const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history',settings:'Settings & billing'};
+const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.',settings:'Choose who receives reports and keep your subscription up to date.'};
+let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null,settingsData=null;
 async function api(path,options={}){
  const response=await fetch('/api/portal/'+path,{...options,headers:{'Content-Type':'application/json',...options.headers}});
  const data=await response.json();
@@ -58,11 +58,12 @@ async function load(silent=false){
  const id=++requestId;const company=$('company').value;
  if(!silent){$('table-body').innerHTML='';$('empty').hidden=false;$('empty').textContent='Loading data…';}
  $('refresh').disabled=true;
- try{const data=await api(`${view}?company=${encodeURIComponent(company)}&page=${page}`);if(id!==requestId)return;rows=data.rows;total=data.total;message('');$('company-name').textContent=companies.find(c=>c.id===company)?.name??'YOUR OPERATION';render();}
- catch(error){if(id!==requestId)return;message(error.message);if(!silent){rows=[];total=0;render();$('empty').textContent='Unable to load data. Select Refresh to try again.';}}
+ try{const data=await api(`${view}?company=${encodeURIComponent(company)}&page=${page}`);if(id!==requestId)return;message('');$('company-name').textContent=companies.find(c=>c.id===company)?.name??'YOUR OPERATION';if(view==='settings'){settingsData=data;renderSettings();}else{rows=data.rows;total=data.total;render();}}
+ catch(error){if(id!==requestId)return;message(error.message);if(!silent&&view!=='settings'){rows=[];total=0;render();$('empty').textContent='Unable to load data. Select Refresh to try again.';}}
  finally{if(id===requestId)$('refresh').disabled=false;}
 }
 function render(){
+ $('settings-panel').hidden=true;$('records-panel').hidden=false;$('table-footnote').hidden=false;
  $('title').textContent=names[view];$('breadcrumb').textContent=names[view];$('subtitle').textContent=subtitles[view];$('list-title').textContent=names[view];$('total').textContent=`${total} record${total===1?'':'s'}`;$('status').hidden=view!=='jobs';
  $('metrics').hidden=view!=='jobs';
  $('metrics').innerHTML=[['queued','Queued','Waiting to be processed'],['processing','Processing','Audit in progress'],['completed','Completed','Report available'],['needs_review','Needs review','Review before resubmitting']].map(([key,label,description])=>`<div class="metric ${key==='needs_review'?'attention':''}"><small>${label}</small><strong>${rows.filter(r=>r.status===key).length.toString().padStart(2,'0')}</strong><small>${description}</small></div>`).join('');
@@ -80,6 +81,39 @@ function render(){
  }).join('');
  $('empty').hidden=filtered.length>0;$('empty').textContent=rows.length?'No results match your filters.':'No records yet. Incoming documents will appear here.';
  $('page-label').textContent=total?`Page ${page+1} of ${Math.ceil(total/50)} · ${filtered.length} shown`:'No records';$('previous').disabled=page===0;$('next').disabled=(page+1)*50>=total;
+}
+function renderSettings(){
+ const data=settingsData;const billing=data.billing;const status=billing?.status??'not linked';
+ const copy={active:['Active and protected','Invoice auditing and scheduled reports are available.','No action is needed.'],past_due:['Payment needs attention','New invoice processing is paused while Stripe retries the payment.','Update the payment method to restore service.'],paused:['Paused','Your data is preserved while invoice processing is paused.',billing?.paused_until?`Service returns automatically on ${date(billing.paused_until)}.`:'Check your subscription before resuming.'],canceling:['Cancellation scheduled','Service remains available through the paid billing period.','After cancellation, data is held for 30 days before permanent deletion.'],canceled:['Inactive','Invoice processing and reports are no longer available.',billing?.deletion_scheduled_at?`Data is scheduled for deletion on ${date(billing.deletion_scheduled_at)}.`:'Contact support during the recovery window if needed.']}[status]??['Subscription unavailable','We could not find an active subscription for this company.','Contact your account administrator.'];
+ $('title').textContent=names.settings;$('breadcrumb').textContent=names.settings;$('subtitle').textContent=subtitles.settings;$('metrics').hidden=true;$('records-panel').hidden=true;$('table-footnote').hidden=true;$('settings-panel').hidden=false;
+ $('settings-panel').innerHTML=`<section class="continuity ${escape(status)}"><p class="eyebrow">ACCOUNT CONTINUITY</p><div><span>${badge(status)}</span><h2>${escape(copy[0])}</h2><p>${escape(copy[1])}</p></div><div class="next-action"><small>NEXT ACTION</small><strong>${escape(copy[2])}</strong></div></section>
+ <div class="settings-grid"><form id="notification-settings" class="settings-card"><p class="eyebrow">REPORT DELIVERY</p><h3>Notification recipients</h3><p class="muted">Daily reports arrive at 7:00 AM in this company time zone. Enter up to 20 addresses.</p><label for="settings-emails">Email addresses</label><textarea id="settings-emails" required>${escape(data.notifications.report_emails.join('\n'))}</textarea><small class="field-help">Use one address per line, or separate them with commas.</small><label for="settings-timezone">Company time zone</label><input id="settings-timezone" list="timezone-options" required value="${escape(data.notifications.timezone)}"><button class="primary" type="submit">Save notification settings</button><p id="settings-feedback" role="status"></p></form>
+ <section class="settings-card"><p class="eyebrow">BILLING</p><h3>Subscription management</h3><p class="muted">Stripe securely manages your card, invoices and billing details.</p><dl><div><dt>Subscription</dt><dd>${badge(status)}</dd></div><div><dt>Billing owner</dt><dd>${billing?.can_manage?'You can manage billing':'Billing owner access required'}</dd></div></dl><button id="manage-billing" ${billing?.can_manage?'':'disabled'}>Change card or view invoices ↗</button><div class="cancel-zone"><strong>Thinking about leaving?</strong><p>Review flexible options before ending service.</p><button id="open-cancel" ${billing?.can_manage&&status==='active'?'':'disabled'}>Review cancellation options</button></div></section></div>`;
+ $('notification-settings').addEventListener('submit',saveNotificationSettings);
+ $('manage-billing').addEventListener('click',async()=>{try{await billingRequest('portal');}catch(error){message(error.message);}});
+ $('open-cancel').addEventListener('click',()=>showCancellation(1));
+}
+async function saveNotificationSettings(event){
+ event.preventDefault();const button=event.submitter;button.disabled=true;$('settings-feedback').textContent='Saving…';
+ try{const report_emails=$('settings-emails').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);await api(`settings/notifications?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:JSON.stringify({timezone:$('settings-timezone').value.trim(),report_emails})});$('settings-feedback').textContent='Notification settings saved.';}
+ catch(error){$('settings-feedback').textContent=error.message;}finally{button.disabled=false;}
+}
+async function billingRequest(action){
+ const buttons=[...document.querySelectorAll('#settings-panel button,#cancel-dialog button')];buttons.forEach(button=>button.disabled=true);
+ try{const result=await api(`billing/${action}?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:'{}'});if(result.url){location.assign(result.url);return;}return result;}
+ finally{buttons.forEach(button=>button.disabled=false);}
+}
+function showCancellation(step){
+ const billing=settingsData.billing;let html='';
+ if(step===1)html=`<h2 id="cancel-title">Stay protected for 15% less next month.</h2><p>Your audit history and automated reports continue without interruption. This one-time discount applies to your next billing period.</p><div class="dialog-actions"><button data-cancel-step="2">Continue</button><button class="primary" id="accept-discount" ${billing.discount_available?'':'disabled'}>${billing.discount_available?'Apply 15% discount':'Discount already used'}</button></div>`;
+ if(step===2)html=`<h2 id="cancel-title">Need a break instead?</h2><p>Pause for 30 days. We preserve your company settings and audit history, and service resumes automatically afterward.</p><div class="dialog-actions"><button data-cancel-step="3">Continue to cancellation</button><button class="primary" id="accept-pause" ${billing.pause_available?'':'disabled'}>${billing.pause_available?'Pause for 30 days':'Pause already used this year'}</button></div>`;
+ if(step===3)html=`<h2 id="cancel-title">Confirm cancellation.</h2><p>Service remains active until the end of your paid period. The account then becomes inactive. After a 30-day recovery window, invoices, PDFs, exceptions, reports, recipients and company settings are permanently deleted.</p><label for="cancel-confirm">Type CANCEL to confirm</label><input id="cancel-confirm" autocomplete="off"><div class="dialog-actions"><button data-cancel-step="2">Go back</button><button class="danger" id="confirm-cancel" disabled>Schedule cancellation</button></div>`;
+ $('cancel-content').innerHTML=html;$('cancel-message').textContent='';if(!$('cancel-dialog').open)$('cancel-dialog').showModal();
+ document.querySelectorAll('[data-cancel-step]').forEach(button=>button.addEventListener('click',()=>showCancellation(Number(button.dataset.cancelStep))));
+ $('accept-discount')?.addEventListener('click',async()=>{try{await billingRequest('retention-discount');$('cancel-dialog').close();await load();message('The 15% discount will be applied to your next billing period.');}catch(error){$('cancel-message').textContent=error.message;}});
+ $('accept-pause')?.addEventListener('click',async()=>{try{await billingRequest('pause');$('cancel-dialog').close();await load();message('Your account is paused for 30 days. Your data remains protected.');}catch(error){$('cancel-message').textContent=error.message;}});
+ const confirm=$('cancel-confirm');confirm?.addEventListener('input',()=>{$('confirm-cancel').disabled=confirm.value!=='CANCEL';});
+ $('confirm-cancel')?.addEventListener('click',async()=>{try{await billingRequest('cancel');$('cancel-dialog').close();await load();message('Cancellation is scheduled for the end of the current billing period.');}catch(error){$('cancel-message').textContent=error.message;}});
 }
 function detail(row){
  selected=row;const report=row.report??row.result;
@@ -101,6 +135,7 @@ function detail(row){
 }
 $('table-body').addEventListener('click',event=>{const button=event.target.closest('[data-id]');if(button)detail(rows.find(r=>(r.id??r.run_id)===button.dataset.id));});
 $('close-dialog').addEventListener('click',()=>$('detail').close());
+$('close-cancel').addEventListener('click',()=>$('cancel-dialog').close());
 $('review-form').addEventListener('submit',async event=>{
  event.preventDefault();const action=event.submitter.value;const buttons=[...$('review-form').querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);
  try{await api(`jobs/${selected.id}/${action}?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:JSON.stringify({note:$('note').value.trim()})});$('detail-message').textContent=action==='retry'?'Case resubmitted to the queue.':'Review saved to history.';$('review-form').hidden=true;if(action==='retry'){const statusBadge=$('detail-content').querySelector('.badge');if(statusBadge){statusBadge.className='badge queued';statusBadge.textContent='queued';}}await load(true);}

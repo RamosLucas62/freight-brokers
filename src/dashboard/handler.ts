@@ -5,7 +5,7 @@ import {createClient} from '@supabase/supabase-js';
 import {z} from 'zod';
 import {adminAction} from './admin.js';
 import {getSupabaseClient} from '../config/supabase.js';
-import {createCheckoutSession,retrieveCheckoutSession} from '../billing/stripe.js';
+import {applyRetentionDiscount,cancelSubscriptionAtPeriodEnd,createBillingPortalSession,createCheckoutSession,pauseSubscriptionOneMonth,retrieveCheckoutSession} from '../billing/stripe.js';
 
 const uuid=z.string().uuid();
 const limits=new Map<string,{count:number,until:number}>();
@@ -117,6 +117,54 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse):Promise<
  }
  const tenant=uuid.parse(url.searchParams.get('company'));
  if(!isAdmin&&!membership.data?.some(m=>m.tenant_id===tenant)){send(403,{error:'You do not have access to this company.'});return true;}
+ if(url.pathname==='/api/portal/settings'&&req.method==='GET'){
+  const [settings,contacts,billing]=await Promise.all([
+   db.from('audit_notification_settings').select('timezone,daily_hour,daily_enabled,monthly_enabled,immediate_enabled,immediate_threshold').eq('tenant_id',tenant).maybeSingle(),
+   db.from('audit_report_contacts').select('email').eq('tenant_id',tenant).eq('enabled',true).order('email'),
+   db.from('audit_billing_customers').select('billing_email,status,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at').eq('tenant_id',tenant).maybeSingle(),
+  ]);
+  if(settings.error||contacts.error||billing.error)throw new Error('Settings lookup failed');
+  const bill=billing.data;
+  send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,report_emails:(contacts.data??[]).map(row=>row.email)},
+   billing:bill?{status:bill.status,paused_until:bill.paused_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
+    deletion_scheduled_at:bill.deletion_scheduled_at,can_manage:!isAdmin&&bill.billing_email===user.user.email?.toLowerCase(),
+    discount_available:!bill.retention_discount_used_at,pause_available:!bill.pause_used_at||new Date(bill.pause_used_at).getTime()<Date.now()-365*86400000}:null});return true;
+ }
+ if(url.pathname==='/api/portal/settings/notifications'&&req.method==='POST'){
+  const input=z.object({timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(20)}).parse(await body(req));
+  const emails=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];
+  const saved=await db.rpc('portal_save_notification_settings',{p_user:user.user.id,p_tenant:tenant,p_timezone:input.timezone,p_report_emails:emails});
+  if(saved.error){send(409,{error:'Check the time zone and email addresses, then try again.'});return true;}
+  send(200,{ok:true});return true;
+ }
+ const billingAction=url.pathname.match(/^\/api\/portal\/billing\/(portal|retention-discount|pause|cancel)$/);
+ if(billingAction&&req.method==='POST'){
+  if(isAdmin){send(403,{error:'Only the customer billing owner can change the subscription.'});return true;}
+  const found=await db.from('audit_billing_customers').select('billing_email,stripe_customer_id,stripe_subscription_id,status,retention_discount_used_at,pause_used_at').eq('tenant_id',tenant).maybeSingle();
+  if(found.error||!found.data){send(409,{error:'No subscription is linked to this company.'});return true;}
+  const billing=found.data;
+  if(billing.billing_email!==user.user.email?.toLowerCase()){send(403,{error:'Only the billing owner can change this subscription.'});return true;}
+  if(billingAction[1]==='portal'){
+   if(!billing.stripe_customer_id)throw new Error('Missing Stripe customer');
+   const session=await createBillingPortalSession(billing.stripe_customer_id);send(200,{url:session.url});return true;
+  }
+  if(!billing.stripe_subscription_id||!['active','canceling','paused'].includes(billing.status)){send(409,{error:'This subscription cannot be changed in its current state.'});return true;}
+  const action=billingAction[1];
+  if(action!=='cancel'&&billing.status!=='active'){send(409,{error:'Retention options are available only while the subscription is active.'});return true;}
+  if(action==='retention-discount'){
+   if(billing.retention_discount_used_at){send(409,{error:'The retention discount has already been used.'});return true;}
+   await applyRetentionDiscount(billing.stripe_subscription_id,tenant);
+   const recorded=await db.rpc('portal_record_billing_action',{p_user:user.user.id,p_tenant:tenant,p_action:'retention_discount'});if(recorded.error)throw recorded.error;
+  } else if(action==='pause'){
+   if(billing.pause_used_at&&new Date(billing.pause_used_at).getTime()>=Date.now()-365*86400000){send(409,{error:'The one-month pause has already been used in the last 12 months.'});return true;}
+   const resumesAt=new Date(Date.now()+30*86400000);await pauseSubscriptionOneMonth(billing.stripe_subscription_id,tenant,resumesAt);
+   const recorded=await db.rpc('portal_record_billing_action',{p_user:user.user.id,p_tenant:tenant,p_action:'pause_one_month'});if(recorded.error)throw recorded.error;
+  } else {
+   await cancelSubscriptionAtPeriodEnd(billing.stripe_subscription_id,tenant);
+   const recorded=await db.rpc('portal_record_billing_action',{p_user:user.user.id,p_tenant:tenant,p_action:'cancel_at_period_end'});if(recorded.error)throw recorded.error;
+  }
+  send(200,{ok:true});return true;
+ }
  const action=url.pathname.match(/^\/api\/portal\/jobs\/([a-f0-9-]+)\/(retry|review)$/);
  if(action&&req.method==='POST'){
  const job=uuid.parse(action[1]);const {note}=z.object({note:z.string().trim().min(5).max(2000)}).parse(await body(req));
