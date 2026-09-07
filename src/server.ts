@@ -8,6 +8,7 @@ import {getSupabaseClient} from './config/supabase.js';
 import {ResendSender} from './notifications/resend.sender.js';
 import {startNotificationWorker} from './notifications/worker.js';
 import {startBillingMaintenanceWorker} from './billing/maintenance.worker.js';
+import {createRateLimiter} from './security/rate-limit.js';
 const Config=z.object({
  PORT:z.coerce.number().int().min(1).max(65535).default(3000),
  RESEND_WEBHOOK_SECRET:z.string().startsWith('whsec_').min(15),
@@ -22,11 +23,20 @@ const Config=z.object({
  WORKER_ENABLED:z.enum(['true','false']).default('false'),
  STRIPE_SECRET_KEY:z.string().startsWith('sk_'),STRIPE_WEBHOOK_SECRET:z.string().startsWith('whsec_'),STRIPE_PRICE_ID:z.string().startsWith('price_'),
  STRIPE_RETENTION_COUPON_ID:z.string().min(1),STRIPE_PORTAL_CONFIGURATION_ID:z.string().startsWith('bpc_'),
+ REDIS_URL:z.string().url(),RATE_LIMIT_KEY_SECRET:z.string().min(32),
+ TRUST_PROXY:z.literal('cloudflare'),TURNSTILE_SITE_KEY:z.string().min(10),TURNSTILE_SECRET_KEY:z.string().min(10),
+ REQUIRE_MFA_SENSITIVE:z.literal('true'),
+ PDF_SCAN_URL:z.string().url(),PDF_SCAN_TOKEN:z.string().min(32),
+ METRICS_TOKEN:z.string().min(32),
+ CSRF_SECRET:z.string().min(32),
+ OPENROUTER_ALLOWED_MODELS:z.string().min(1),OPENROUTER_DATA_PROCESSING_ACK:z.literal('true'),
 });
 const parsed=Config.safeParse(process.env);
 if(!parsed.success){console.error('Invalid server configuration:',parsed.error.issues.map(i=>i.path.join('.')).join(', '));process.exit(1);}
 const config=parsed.data;
-const server=createApp({secret:config.RESEND_WEBHOOK_SECRET,enqueue,ready:async()=>{
+if(new URL(config.PORTAL_URL).protocol!=='https:'){console.error('Invalid server configuration: PORTAL_URL must use HTTPS in production.');process.exit(1);}
+const limiter=createRateLimiter(config.REDIS_URL);
+const server=createApp({secret:config.RESEND_WEBHOOK_SECRET,enqueue,limiter,ready:async()=>{
  const {error}=await getSupabaseClient().from('audit_inbound_jobs').select('id',{head:true}).limit(1);
  return !error;
 }});
@@ -41,6 +51,6 @@ async function shutdown(){
  if(closing)return;closing=true;
  server.close();
  const deadline=setTimeout(()=>process.exit(1),25000);deadline.unref();
- await Promise.all([stopWorker(),stopNotifications(),stopBilling()]);clearTimeout(deadline);process.exit(0);
+ await Promise.all([stopWorker(),stopNotifications(),stopBilling(),limiter.close()]);clearTimeout(deadline);process.exit(0);
 }
 process.on('SIGTERM',()=>void shutdown());process.on('SIGINT',()=>void shutdown());

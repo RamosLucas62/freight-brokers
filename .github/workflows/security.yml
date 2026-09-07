@@ -1,0 +1,55 @@
+name: Security checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 9 * * 1'
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm audit --audit-level=high
+      - run: npm run build
+  codeql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with: {languages: javascript-typescript}
+      - uses: github/codeql-action/analyze@v3
+  filesystem-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with: {sarif_file: trivy-results.sarif}
+  container-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t freight-audit:${{ github.sha }} .
+      - run: docker build -t freight-pdf-scanner:${{ github.sha }} security/pdf-scanner
+      - uses: aquasecurity/trivy-action@0.33.1
+        with: {image-ref: 'freight-audit:${{ github.sha }}', severity: 'HIGH,CRITICAL', ignore-unfixed: true, exit-code: '1'}
+      - uses: aquasecurity/trivy-action@0.33.1
+        with: {image-ref: 'freight-pdf-scanner:${{ github.sha }}', severity: 'HIGH,CRITICAL', ignore-unfixed: true, exit-code: '1'}

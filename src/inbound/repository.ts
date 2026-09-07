@@ -4,6 +4,10 @@ import type { AuditReport } from '../types/report.types.js';
 import { recipientAliases, type ReceivedEvent } from './events.js';
 import {invoiceObjectKey,putInvoiceObject} from '../storage/r2.js';
 export interface InboundJob { id:string; tenant_id:string; email_id:string; }
+export async function authorizeInbound(job:InboundJob,sender:string):Promise<void>{
+ const {data,error}=await getSupabaseClient().rpc('authorize_inbound_processing',{p_tenant:job.tenant_id,p_sender:sender});
+ if(error||!data)throw new Error('UNAUTHORIZED_OR_QUOTA_EXCEEDED');
+}
 export async function enqueue(eventId:string,event:ReceivedEvent) {
  const {error}=await getSupabaseClient().rpc('enqueue_audit_email',{
   p_event_id:eventId,p_email_id:event.data.email_id,p_aliases:recipientAliases(event),

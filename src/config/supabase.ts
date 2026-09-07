@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+export const timedFetch:typeof fetch=(input,init={})=>fetch(input,{...init,signal:init.signal??AbortSignal.timeout(10000)});
 
 let _client: SupabaseClient | null = null;
 
@@ -12,6 +13,6 @@ export function getSupabaseClient(): SupabaseClient {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in environment variables');
   }
 
-  _client = createClient(url, key);
+  _client = createClient(url, key,{global:{fetch:timedFetch},auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
   return _client;
 }

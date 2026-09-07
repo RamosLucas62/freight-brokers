@@ -1,4 +1,6 @@
-import {createHmac,timingSafeEqual} from 'node:crypto';
+import Stripe from 'stripe';
+import {privacyKey} from '../security/rate-limit.js';
+import {readResponseBody} from '../security/http.js';
 
 export type StripeCheckoutSession={id:string;url?:string|null;payment_status?:string;status?:string;customer?:string;subscription?:string;customer_details?:{email?:string|null}};
 
@@ -8,8 +10,8 @@ function config(){
  return secret;
 }
 async function stripe(path:string,init:RequestInit={}){
- const response=await fetch('https://api.stripe.com/v1'+path,{...init,headers:{Authorization:`Bearer ${config()}`,...init.headers}});
- const data=await response.json().catch(()=>({}));
+ const response=await fetch('https://api.stripe.com/v1'+path,{...init,signal:init.signal??AbortSignal.timeout(10000),headers:{Authorization:`Bearer ${config()}`,...init.headers}});
+ const data=await readResponseBody(response,2*1024*1024).then(bytes=>JSON.parse(bytes.toString('utf8'))).catch(()=>({}));
  if(!response.ok)throw new Error(typeof data.error?.message==='string'?data.error.message:'STRIPE_REQUEST_FAILED');
  return data;
 }
@@ -26,7 +28,7 @@ export async function createCheckoutSession(email:string){
   cancel_url:new URL('/',origin).href,
   allow_promotion_codes:'true',
  });
- return stripe('/checkout/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded'}}) as Promise<StripeCheckoutSession>;
+ return stripe('/checkout/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`checkout-${privacyKey(email).slice(0,48)}`}}) as Promise<StripeCheckoutSession>;
 }
 export async function retrieveCheckoutSession(id:string){
  return stripe('/checkout/sessions/'+encodeURIComponent(id)) as Promise<StripeCheckoutSession>;
@@ -36,7 +38,7 @@ export async function createBillingPortalSession(customerId:string){
  const configuration=process.env.STRIPE_PORTAL_CONFIGURATION_ID;
  if(!origin||!configuration)throw new Error('STRIPE_NOT_CONFIGURED');
  const body=new URLSearchParams({customer:customerId,configuration,return_url:new URL('/',origin).href});
- return stripe('/billing_portal/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded'}}) as Promise<{url:string}>;
+ return stripe('/billing_portal/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`billing-portal-${privacyKey(customerId).slice(0,48)}-${Math.floor(Date.now()/300000)}`}}) as Promise<{url:string}>;
 }
 export async function applyRetentionDiscount(subscriptionId:string,tenantId:string){
  const coupon=process.env.STRIPE_RETENTION_COUPON_ID;
@@ -55,12 +57,9 @@ export async function cancelSubscriptionAtPeriodEnd(subscriptionId:string,tenant
 export function verifyStripeSignature(raw:string,header:string|undefined){
  const secret=process.env.STRIPE_WEBHOOK_SECRET;
  if(!secret||!header)throw new Error('STRIPE_SIGNATURE_INVALID');
- const parts=Object.fromEntries(header.split(',').map(p=>p.split('=',2) as [string,string]));
- const timestamp=parts.t;const signature=parts.v1;
- if(!timestamp||!signature)throw new Error('STRIPE_SIGNATURE_INVALID');
- if(Math.abs(Date.now()/1000-Number(timestamp))>300)throw new Error('STRIPE_SIGNATURE_INVALID');
- const expected=createHmac('sha256',secret).update(`${timestamp}.${raw}`).digest('hex');
- const left=Buffer.from(signature,'hex');const right=Buffer.from(expected,'hex');
- if(left.length!==right.length||!timingSafeEqual(left,right))throw new Error('STRIPE_SIGNATURE_INVALID');
- return JSON.parse(raw);
+ try{
+  const event=Stripe.webhooks.constructEvent(raw,header,secret,300);
+  return {id:event.id,type:event.type,created:event.created,data:{object:event.data.object as unknown as Record<string,unknown>}};
+ }
+ catch{throw new Error('STRIPE_SIGNATURE_INVALID');}
 }

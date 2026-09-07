@@ -3,6 +3,7 @@ export const MAX_PDF_BYTES=20*1024*1024;
 const Attachment=z.object({id:z.string().uuid(),filename:z.string().nullable(),content_type:z.string(),size:z.number().int().nonnegative(),download_url:z.string().url()});
 const TRUSTED_ATTACHMENT_HOSTS=new Set(['inbound-cdn.resend.com','cdn.resend.app']);
 export type Attachment=z.infer<typeof Attachment>;
+export interface EmailMetadata {automatic:boolean;from:string;authenticated:boolean;}
 export async function limitedBody(response:Response,limit:number):Promise<Buffer> {
  if(!response.ok || !response.body)throw new Error('RESEND_DOWNLOAD_FAILED');
  const reader=response.body.getReader();const chunks:Buffer[]=[];let size=0;
@@ -25,11 +26,13 @@ export class ResendReceivingClient {
   if(payload.has_more || payload.data.length>10)throw new Error('TOO_MANY_ATTACHMENTS');
   return payload.data;
  }
- async isAutomatic(emailId:string):Promise<boolean> {
-  const payload=z.object({headers:z.record(z.string()).default({})}).parse(await this.get(`/emails/receiving/${emailId}?html_format=cid`));
+ async metadata(emailId:string):Promise<EmailMetadata> {
+  const payload=z.object({from:z.string().email().default('unknown@invalid.local'),headers:z.record(z.string()).default({})}).parse(await this.get(`/emails/receiving/${emailId}?html_format=cid`));
   const headers=Object.fromEntries(Object.entries(payload.headers).map(([k,v])=>[k.toLowerCase(),v.toLowerCase()]));
-  return headers['auto-submitted']==='auto-replied';
+  const authentication=headers['authentication-results']??'';
+  return {automatic:headers['auto-submitted']==='auto-replied',from:payload.from.toLowerCase(),authenticated:/(?:dmarc|dkim)=pass\b/.test(authentication)};
  }
+ async isAutomatic(emailId:string):Promise<boolean>{return (await this.metadata(emailId)).automatic;}
  async download(attachment:Attachment):Promise<Buffer> {
   if(attachment.size>MAX_PDF_BYTES)throw new Error('ATTACHMENT_TOO_LARGE');
   const url=new URL(attachment.download_url);

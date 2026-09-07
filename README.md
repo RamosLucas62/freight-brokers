@@ -1,18 +1,18 @@
 # Freight Brokers — auditoria de faturas
 
-Backend em TypeScript para processar um PDF por fatura, identificar inconsistências e gerar um relatório JSON. Ainda não há interface gráfica.
+Plataforma em TypeScript para receber faturas por e-mail, identificar inconsistências, entregar relatórios automáticos e permitir revisão no portal do cliente.
 
 ## Fluxo do produto definido
 
 O cliente receberá um endereço exclusivo em `audit.aiolympian.com` e encaminhará ou copiará suas faturas para ele. A auditoria será automática, com relatório salvo no sistema e entregue por e-mail. O pagamento será via Stripe, com conta ativa, inativa ou pausada. O painel será complementar; upload manual não é o fluxo principal.
 
-Recebimento, entrega por e-mail e Stripe ainda serão implementados. A estrutura de clientes está implementada e a migração foi aplicada manualmente no Supabase. O backend atual foi validado por comandos e faturas fictícias. Antes de receber clientes, precisamos separar o histórico e os dados por conta. Requisitos e sequência de implementação: [Fluxo por e-mail e assinaturas](docs/fluxo-email-assinaturas.md).
+O recebimento pelo Resend, armazenamento privado no R2, relatórios diários/mensais, assinatura Stripe e portal estão implementados. A implantação de produção exige as migrações, Redis, Turnstile e o scanner privado de PDFs descritos no [guia de segurança](docs/security-production.md).
 
 ## Preparação
 
 Use Node.js 22 ou posterior. Na pasta do projeto, rode `npm install` e copie `.env.example` para `.env`. Preencha localmente as credenciais; não as envie por chat nem as coloque no Git.
 
-- `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`: acesso de backend ao PostgreSQL do Supabase. A chave anônima não é usada. Não exponha a chave de serviço em um navegador.
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` e `SUPABASE_ANON_KEY`: o backend usa a chave administrativa somente para workers e funções auditadas; consultas de clientes usam o JWT e RLS. Nunca exponha a chave de serviço no navegador.
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` e `R2_BUCKET_NAME`: bucket privado Cloudflare R2 usado para armazenar os PDFs recebidos. Use um token limitado ao bucket e nunca habilite acesso público.
 - `DATABASE_URL`: conexão PostgreSQL, usada apenas para migração. O cliente `psql` precisa estar instalado.
 - `OPENROUTER_API_KEY`: chave da sua conta OpenRouter com créditos.
@@ -20,6 +20,7 @@ Use Node.js 22 ou posterior. Na pasta do projeto, rode `npm install` e copie `.e
 - `OPENROUTER_PDF_ENGINE`: `native` para leitura direta por um modelo compatível com PDF.
 - `FMCSA_API_KEY`: WebKey do QCMobile.
 - `EXTRACTOR_PROVIDER=openrouter` e `CARRIER_PROVIDER=fmcsa` para uso real.
+- `REDIS_URL`, `RATE_LIMIT_KEY_SECRET`, Turnstile, scanner de PDF e métricas são obrigatórios no servidor de produção. Veja `.env.example`.
 
 Execute `npm run db:migrate` para aplicar o esquema e as migrações em uma transação. O script não remove tabelas ou dados. Habilita RLS nas tabelas do projeto e reserva a nova função de gravação para backend; se existirem outros clientes usando a chave anônima, reveja suas políticas antes da migração.
 
@@ -111,7 +112,7 @@ Foram confirmados três registros novos, seis alertas e o relatório persistido.
 
 ## Contas e isolamento (2026-09-06)
 
-A migração `db/migrations/002_tenant_isolation.sql` cria empresas (`audit_tenants`), vínculos de usuários (`audit_memberships`) e contatos (`audit_report_contacts`). Aliases são exclusivos no domínio audit.aiolympian.com. Contatos adicionados no onboarding pago são verificados nesse fluxo; `listReportRecipients` retorna somente contatos habilitados e verificados.
+A migração `db/migrations/002_tenant_isolation.sql` cria empresas (`audit_tenants`), vínculos de usuários (`audit_memberships`) e contatos (`audit_report_contacts`). A migração 009 adiciona papéis por empresa, confirmação obrigatória de novos destinatários, remetentes autorizados, fila Stripe e trilha de segurança. Aliases são exclusivos no domínio audit.aiolympian.com; relatórios são enviados somente a contatos habilitados e confirmados.
 
 `createTenant`, `setTenantStatus` e `addReportContact` são funções administrativas de backend em `src/db/tenants.repo.ts`. Não são endpoints públicos. Contas nascem inativas; Stripe ainda não controla seu estado. RLS permite somente leitura por usuários vinculados à empresa. Cadastro, associação, verificação de contato e alteração de estado são exclusivos do backend.
 
@@ -131,7 +132,7 @@ A entrada Resend e a fila de processamento estão implementadas, usando Cloudfla
 
 O envio automático por Resend está implementado na migração 007: resumo diário às 07:00 no fuso do cliente, fechamento no primeiro dia útil, alertas imediatos de alta severidade e anexos PDF/CSV. Reenvios usam uma fila durável e chave de idempotência. Configure `RESEND_FROM_EMAIL`, aplique as migrações e mantenha `WORKER_ENABLED=true`.
 
-Validação atual: 166 testes passaram, a compilação TypeScript foi aprovada e a migração 007 passou em PostgreSQL temporário com rollback. Ela ainda precisa ser aplicada no Supabase do ambiente.
+As migrações ainda precisam ser aplicadas e verificadas no Supabase de homologação antes da implantação.
 
 ## Painel do cliente
 

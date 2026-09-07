@@ -1,0 +1,47 @@
+import hashlib, json, os, re, subprocess, tempfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+MAX_BYTES = 20 * 1024 * 1024
+MAX_PAGES = 250
+TOKEN = os.environ.get("PDF_SCAN_TOKEN", "")
+freshclam = subprocess.Popen(["freshclam","--daemon","--foreground=true"],stdout=subprocess.DEVNULL,stderr=subprocess.STDOUT)
+
+def command(args, timeout=12):
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "FreightPdfScanner/1"
+    def log_message(self, fmt, *args):
+        print(json.dumps({"component":"pdf-scanner","message":fmt % args}))
+    def reply(self, status, payload):
+        body=json.dumps(payload).encode(); self.send_response(status); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+    def do_POST(self):
+        self.connection.settimeout(30)
+        if self.path != "/scan" or self.headers.get("Authorization") != "Bearer "+TOKEN or not TOKEN:
+            self.reply(404,{"safe":False,"page_count":0,"reason":"not_found"}); return
+        try: length=int(self.headers.get("Content-Length","0"))
+        except ValueError: length=0
+        if length < 5 or length > MAX_BYTES or self.headers.get_content_type() != "application/pdf":
+            self.reply(413,{"safe":False,"page_count":0,"reason":"size"}); return
+        data=self.rfile.read(length)
+        if len(data)!=length or not data.startswith(b"%PDF-"):
+            self.reply(400,{"safe":False,"page_count":0,"reason":"format"}); return
+        with tempfile.TemporaryDirectory(prefix="scan-") as folder:
+            path=os.path.join(folder,hashlib.sha256(data).hexdigest()+".pdf")
+            with open(path,"xb") as handle: handle.write(data)
+            virus=command(["clamscan","--no-summary",path],18)
+            if virus.returncode != 0:
+                self.reply(422,{"safe":False,"page_count":0,"reason":"malware" if virus.returncode==1 else "scanner_error"}); return
+            checked=command(["qpdf","--check",path])
+            if checked.returncode != 0 or "encrypted" in (checked.stdout+checked.stderr).lower():
+                self.reply(422,{"safe":False,"page_count":0,"reason":"invalid_or_encrypted"}); return
+            raw=command(["strings",path]).stdout
+            if re.search(r"/(JavaScript|JS|Launch|EmbeddedFile|OpenAction|AA)\b",raw):
+                self.reply(422,{"safe":False,"page_count":0,"reason":"active_content"}); return
+            info=command(["pdfinfo",path]).stdout
+            match=re.search(r"^Pages:\s+(\d+)",info,re.MULTILINE); pages=int(match.group(1)) if match else 0
+            if pages < 1 or pages > MAX_PAGES:
+                self.reply(422,{"safe":False,"page_count":pages,"reason":"page_limit"}); return
+            self.reply(200,{"safe":True,"page_count":pages})
+
+ThreadingHTTPServer(("0.0.0.0",8080),Handler).serve_forever()
