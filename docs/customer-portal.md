@@ -14,7 +14,11 @@ O servidor existente serve o painel em `/`, sem serviço de frontend separado. O
 
 O portal pode iniciar uma assinatura via Stripe Checkout. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` e `STRIPE_PRICE_ID` no ambiente de execução. O botão de novo cliente envia o usuário ao Checkout; após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`. O backend consulta a sessão no Stripe antes de criar qualquer empresa ativa.
 
-No onboarding, o cliente informa nome da empresa e e-mail de acesso. O backend cria ou reutiliza o usuário no Supabase Auth, cria a empresa ativa, vincula o usuário e retorna o endereço único de recebimento em `audit.aiolympian.com`. Em seguida envia um magic link para o e-mail informado.
+No onboarding, o cliente informa nome da empresa, e-mail de acesso, destinatários dos relatórios e fuso horário. O backend cria ou reutiliza o usuário no Supabase Auth, cria a empresa ativa, vincula o usuário e retorna o endereço único de recebimento em `audit.aiolympian.com`. Em seguida envia um magic link para o e-mail informado. O navegador sugere o fuso, mas o cliente pode corrigi-lo; não dependemos de localização por IP.
+
+Às 07:00 no fuso da empresa, o serviço envia um resumo de todos os riscos detectados no dia anterior, inclusive uma confirmação quando não houve ocorrências. No primeiro dia útil de cada mês, envia o fechamento do mês anterior. Ambos incluem PDF e planilha CSV. Duplicidade exata, alteração bancária e riscos a partir de US$ 5.000 também geram alerta imediato. O limite fica registrado por empresa.
+
+“Perda evitada” só é somada depois que um usuário registra o desfecho da exceção no portal, informa o valor confirmado e descreve a correção, cancelamento ou bloqueio do pagamento. Casos apenas detectados continuam como valor sob análise e não inflam a economia mensal.
 
 Configure no Stripe o webhook:
 

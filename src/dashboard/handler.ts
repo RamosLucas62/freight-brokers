@@ -49,7 +49,8 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse):Promise<
  return true;
  }
  if(url.pathname==='/api/portal/onboarding'&&req.method==='POST'){
- const input=z.object({session_id:z.string().startsWith('cs_').max(255),company_name:z.string().trim().min(2).max(200),email:z.string().email().max(254)}).parse(await body(req));
+ const input=z.object({session_id:z.string().startsWith('cs_').max(255),company_name:z.string().trim().min(2).max(200),email:z.string().email().max(254),
+  timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(20)}).parse(await body(req));
  const checkout=await retrieveCheckoutSession(input.session_id);
  if(checkout.payment_status!=='paid'||checkout.status!=='complete'){send(402,{error:'Payment is not complete yet.'});return true;}
  const email=input.email.toLowerCase();
@@ -64,7 +65,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse):Promise<
  }
  let result:{data:any,error:any}|undefined;
  for(let i=0;i<8;i++){
-  result=await db.rpc('portal_complete_onboarding',{p_session_id:input.session_id,p_company_name:input.company_name,p_alias:i?`${slugBase}-${i+1}`:slugBase,p_user_id:userId,p_email:email,p_stripe_customer_id:String(checkout.customer??''),p_stripe_subscription_id:String(checkout.subscription??'')});
+  result=await db.rpc('portal_complete_onboarding',{p_session_id:input.session_id,p_company_name:input.company_name,p_alias:i?`${slugBase}-${i+1}`:slugBase,p_user_id:userId,p_email:email,p_stripe_customer_id:String(checkout.customer??''),p_stripe_subscription_id:String(checkout.subscription??''),p_timezone:input.timezone,p_report_emails:[...new Set(input.report_emails.map(value=>value.toLowerCase()))]});
   if(!result.error)break;
  }
  if(result?.error)throw result.error;
@@ -123,7 +124,15 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse):Promise<
  if(error){send(409,{error:'Unable to save. Check the current case status and try again.'});return true;}
  send(200,{ok:true});return true;
  }
- const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
+ const resolution=url.pathname.match(/^\/api\/portal\/exceptions\/([a-f0-9-]+)\/resolve$/);
+ if(resolution&&req.method==='POST'){
+  const input=z.object({outcome:z.enum(['avoided','no_loss']),avoided_amount:z.number().nonnegative().max(1000000000).nullable(),note:z.string().trim().min(5).max(2000)}).parse(await body(req));
+  if(input.outcome==='avoided'&&(!input.avoided_amount||input.avoided_amount<=0)){send(400,{error:'Enter the confirmed amount of loss avoided.'});return true;}
+  const {error}=await db.rpc('portal_resolve_exception',{p_user:user.user.id,p_tenant:tenant,p_exception:resolution[1],p_outcome:input.outcome,p_avoided_amount:input.avoided_amount,p_note:input.note});
+  if(error){send(409,{error:'Unable to save this outcome. Please refresh and try again.'});return true;}
+  send(200,{ok:true});return true;
+ }
+ const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at,resolution_status,avoided_amount,resolution_note,resolved_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
  const table=tables[url.pathname.split('/').pop()??''];
  if(table&&req.method==='GET'){
  const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);

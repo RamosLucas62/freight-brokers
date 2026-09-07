@@ -27,14 +27,15 @@ $('checkout-form').addEventListener('submit',async event=>{
 $('onboarding-form').addEventListener('submit',async event=>{
  event.preventDefault();const params=new URLSearchParams(location.search);const button=event.submitter;button.disabled=true;$('onboarding-message').textContent='Creating your account…';
  try{
-  const data=await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:$('onboarding-email').value.trim()})});
+  const reportEmails=$('report-emails').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);
+  const data=await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:$('onboarding-email').value.trim(),timezone:$('timezone').value.trim(),report_emails:reportEmails})});
   $('onboarding-message').innerHTML=`Account created. Send invoices to <strong>${escape(data.audit_email)}</strong>. Check your inbox for the portal sign-in link.`;
  }
  catch(error){$('onboarding-message').textContent=error.message;}finally{button.disabled=false;}
 });
 async function initialize(){
  try{
- if(location.pathname==='/onboarding'){$('signin-panel').hidden=true;$('onboarding-panel').hidden=false;return;}
+ if(location.pathname==='/onboarding'){$('signin-panel').hidden=true;$('onboarding-panel').hidden=false;$('timezone').value=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';$('onboarding-email').addEventListener('input',()=>{if(!$('report-emails').value.trim())$('report-emails').value=$('onboarding-email').value.trim();});return;}
  const hash=new URLSearchParams(location.hash.slice(1));
  if(hash.has('error_description')){history.replaceState(null,'','/');throw new Error('This link has expired or has already been used. Request a new link.');}
  if(hash.has('access_token')){const access_token=hash.get('access_token');history.replaceState(null,'','/');await api('session',{method:'POST',body:JSON.stringify({access_token})});}
@@ -73,7 +74,7 @@ function render(){
  if(view==='jobs')cells=[`AUD-${short}<small>Email ${escape(r.email_id?.slice(0,8))}</small>`,date(r.created_at),badge(r.status),r.result?.total_exceptions??'—'];
  if(view==='invoices')cells=[`${escape(r.numero_fatura)}<small>Load ${escape(r.numero_carga)}</small>`,`${escape(r.carrier_name)}<small>MC ${escape(r.mc_number)}</small>`,`${escape(r.origem)} → ${escape(r.destino)}`,money(r.valor_total)];
  if(view==='reports')cells=[`AUD-${short}`,date(r.created_at),r.report?.total_invoices_processed??0,r.report?.total_exceptions??0,money(r.report?.valor_total_under_review)];
- if(view==='exceptions')cells=[escape(r.tipo_regra),escape(r.descricao?.slice(0,85)),money(r.valor_envolvido),date(r.created_at)];
+ if(view==='exceptions')cells=[`${escape(r.tipo_regra)}<small>${escape(r.resolution_status??'pending')}</small>`,escape(r.descricao?.slice(0,85)),money(r.valor_envolvido),date(r.created_at)];
  if(view==='history')cells=[r.action==='retry'?'Resubmitted to queue':'Review saved',escape(r.job_id?.slice(0,8)),escape(r.note?.slice(0,85)),`${escape(r.actor_email??'Legacy record')}<small>${escape(r.actor_role??'customer')}</small>`,date(r.created_at)];
  return '<tr>'+cells.map(c=>`<td>${c}</td>`).join('')+`<td><button class="row-action" data-id="${escape(r.id??r.run_id)}">View details ↗</button></td></tr>`;
  }).join('');
@@ -91,9 +92,9 @@ function detail(row){
  for(const warning of report.warnings??[])html+=`<p class="muted">${escape(warning)}</p>`;
  if(report.skipped_files?.length)html+=`<p class="muted">Previously processed documents: ${escape(report.skipped_files.join(', '))}</p>`;
  html+='<button id="download-report">Download report JSON ↓</button>';}
- if(view==='exceptions')html+=`<div class="exception"><strong>${escape(row.tipo_regra)}</strong><p>${escape(row.descricao)}</p></div><div class="detail-grid">${field('Amount involved',money(row.valor_envolvido))}${field('Invoice',row.invoice_id)}${field('Document',row.source_file)}${field('Page',row.source_page)}</div>`;
+ if(view==='exceptions')html+=`<div class="exception"><strong>${escape(row.tipo_regra)}</strong><p>${escape(row.descricao)}</p></div><div class="detail-grid">${field('Amount involved',money(row.valor_envolvido))}${field('Invoice',row.invoice_id)}${field('Document',row.source_file)}${field('Page',row.source_page)}${field('Financial outcome',row.resolution_status??'pending')}${field('Confirmed loss avoided',money(row.avoided_amount))}</div>${row.resolution_note?`<p><strong>Outcome notes</strong><br>${escape(row.resolution_note)}</p>`:''}`;
  if(view==='history')html+=`<div class="detail-grid">${field('Action',row.action==='retry'?'Resubmission':'Review')}${field('Date',date(row.created_at))}${field('Submission',row.job_id)}${field('Performed by',row.actor_email??'Legacy record')}${field('Role',row.actor_role??'customer')}</div><p>${escape(row.note)}</p>`;
- $('detail-content').innerHTML=html;$('detail-message').textContent='';$('note').value='';$('review-form').hidden=view!=='jobs'||!['needs_review','blocked','completed','ignored'].includes(row.status);
+ $('detail-content').innerHTML=html;$('detail-message').textContent='';$('note').value='';$('review-form').hidden=view!=='jobs'||!['needs_review','blocked','completed','ignored'].includes(row.status);$('resolution-form').hidden=view!=='exceptions';if(view==='exceptions'){$('resolution-outcome').value=row.resolution_status==='no_loss'?'no_loss':'avoided';$('avoided-amount').value=row.avoided_amount??row.valor_envolvido??'';$('resolution-note').value=row.resolution_note??'';$('avoided-amount').disabled=$('resolution-outcome').value==='no_loss';}
  $('review-form').querySelector('[value="retry"]').hidden=!['needs_review','blocked'].includes(row.status);
  $('download-report')?.addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`audit-${report.run_id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
  $('detail').showModal();
@@ -105,6 +106,8 @@ $('review-form').addEventListener('submit',async event=>{
  try{await api(`jobs/${selected.id}/${action}?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:JSON.stringify({note:$('note').value.trim()})});$('detail-message').textContent=action==='retry'?'Case resubmitted to the queue.':'Review saved to history.';$('review-form').hidden=true;if(action==='retry'){const statusBadge=$('detail-content').querySelector('.badge');if(statusBadge){statusBadge.className='badge queued';statusBadge.textContent='queued';}}await load(true);}
  catch(error){$('detail-message').textContent=error.message;}finally{buttons.forEach(b=>b.disabled=false);}
 });
+$('resolution-outcome').addEventListener('change',()=>{$('avoided-amount').disabled=$('resolution-outcome').value==='no_loss';});
+$('resolution-form').addEventListener('submit',async event=>{event.preventDefault();const outcome=$('resolution-outcome').value;const amount=outcome==='avoided'?Number($('avoided-amount').value):null;try{await api(`exceptions/${selected.id}/resolve?company=${encodeURIComponent($('company').value)}`,{method:'POST',body:JSON.stringify({outcome,avoided_amount:amount,note:$('resolution-note').value.trim()})});$('detail-message').textContent='Financial outcome saved. It will be reflected in the monthly report.';$('resolution-form').hidden=true;await load(true);}catch(error){$('detail-message').textContent=error.message;}});
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{if(currentUser?.is_admin&&!$('company').value){adminPortal.show('companies');return;}adminPortal.leave();if(currentUser?.is_admin)$('admin-context').hidden=false;$('customer-workspace').hidden=false;$('admin-workspace').hidden=true;view=button.dataset.view;page=0;$('search').value='';$('status').value='';document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-current',b===button?'page':'false');});load();}));
 $('company').addEventListener('change',()=>{page=0;$('search').value='';$('status').value='';load();});
 $('search').addEventListener('input',render);$('status').addEventListener('change',render);
