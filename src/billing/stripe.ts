@@ -31,6 +31,27 @@ export async function createCheckoutSession(email:string){
 export async function retrieveCheckoutSession(id:string){
  return stripe('/checkout/sessions/'+encodeURIComponent(id)) as Promise<StripeCheckoutSession>;
 }
+export async function createBillingPortalSession(customerId:string){
+ const origin=process.env.PORTAL_URL;
+ const configuration=process.env.STRIPE_PORTAL_CONFIGURATION_ID;
+ if(!origin||!configuration)throw new Error('STRIPE_NOT_CONFIGURED');
+ const body=new URLSearchParams({customer:customerId,configuration,return_url:new URL('/',origin).href});
+ return stripe('/billing_portal/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded'}}) as Promise<{url:string}>;
+}
+export async function applyRetentionDiscount(subscriptionId:string,tenantId:string){
+ const coupon=process.env.STRIPE_RETENTION_COUPON_ID;
+ if(!coupon)throw new Error('STRIPE_RETENTION_NOT_CONFIGURED');
+ const body=new URLSearchParams({'discounts[0][coupon]':coupon});
+ return stripe('/subscriptions/'+encodeURIComponent(subscriptionId),{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`retention-discount-${tenantId}`}});
+}
+export async function pauseSubscriptionOneMonth(subscriptionId:string,tenantId:string,resumesAt:Date){
+ const body=new URLSearchParams({'pause_collection[behavior]':'void','pause_collection[resumes_at]':String(Math.floor(resumesAt.getTime()/1000))});
+ return stripe('/subscriptions/'+encodeURIComponent(subscriptionId),{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`retention-pause-${tenantId}-${resumesAt.getUTCFullYear()}`}});
+}
+export async function cancelSubscriptionAtPeriodEnd(subscriptionId:string,tenantId:string){
+ const body=new URLSearchParams({cancel_at_period_end:'true'});
+ return stripe('/subscriptions/'+encodeURIComponent(subscriptionId),{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`cancel-at-period-end-${tenantId}`}});
+}
 export function verifyStripeSignature(raw:string,header:string|undefined){
  const secret=process.env.STRIPE_WEBHOOK_SECRET;
  if(!secret||!header)throw new Error('STRIPE_SIGNATURE_INVALID');

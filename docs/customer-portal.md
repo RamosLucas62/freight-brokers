@@ -14,6 +14,12 @@ O servidor existente serve o painel em `/`, sem serviço de frontend separado. O
 
 O portal pode iniciar uma assinatura via Stripe Checkout. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` e `STRIPE_PRICE_ID` no ambiente de execução. O botão de novo cliente envia o usuário ao Checkout; após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`. O backend consulta a sessão no Stripe antes de criar qualquer empresa ativa.
 
+Configure também `STRIPE_RETENTION_COUPON_ID` com um cupom Stripe de **15% e duração `once`** e `STRIPE_PORTAL_CONFIGURATION_ID` com uma configuração dedicada do Customer Portal. Nessa configuração, habilite troca de forma de pagamento e histórico de faturas, mas deixe o cancelamento de assinatura desabilitado: o cancelamento deve passar pelo fluxo de retenção do próprio portal.
+
+No endpoint Stripe `/webhooks/stripe`, assine pelo menos `checkout.session.completed`, `invoice.payment_failed`, `invoice.paid`, `customer.subscription.updated` e `customer.subscription.deleted`. Falha de pagamento pausa o processamento; pagamento confirmado reativa; assinatura encerrada inativa a conta e agenda a eliminação dos dados operacionais após 30 dias.
+
+Em **Settings & billing**, o responsável financeiro pode abrir o Customer Portal, receber o desconto único, pausar por 30 dias (uma vez a cada 12 meses) ou agendar o cancelamento para o fim do período pago. A exclusão definitiva remove PDFs do R2, faturas, exceções, relatórios, destinatários e acessos; permanece apenas um registro mínimo anonimizado de cobrança e da execução da exclusão.
+
 No onboarding, o cliente informa nome da empresa, e-mail de acesso, destinatários dos relatórios e fuso horário. O backend cria ou reutiliza o usuário no Supabase Auth, cria a empresa ativa, vincula o usuário e retorna o endereço único de recebimento em `audit.aiolympian.com`. Em seguida envia um magic link para o e-mail informado. O navegador sugere o fuso, mas o cliente pode corrigi-lo; não dependemos de localização por IP.
 
 Às 07:00 no fuso da empresa, o serviço envia um resumo de todos os riscos detectados no dia anterior, inclusive uma confirmação quando não houve ocorrências. No primeiro dia útil de cada mês, envia o fechamento do mês anterior. Ambos incluem PDF e planilha CSV. Duplicidade exata, alteração bancária e riscos a partir de US$ 5.000 também geram alerta imediato. O limite fica registrado por empresa.

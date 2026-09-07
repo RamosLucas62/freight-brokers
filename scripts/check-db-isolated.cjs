@@ -6,7 +6,7 @@ try{
  let sql="CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),email text UNIQUE,created_at timestamptz DEFAULT now(),last_sign_in_at timestamptz); CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$; GRANT USAGE ON SCHEMA auth TO authenticated,service_role; GRANT SELECT ON auth.users TO service_role; GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated,service_role; BEGIN;\n";
  sql+=readFileSync(join(root,'db/schema.sql'),'utf8');
  for(const file of readdirSync(join(root,'db/migrations')).filter(f=>f.endsWith('.sql')).sort())sql+='\n'+readFileSync(join(root,'db/migrations',file),'utf8');
- for(const file of ['tenant-isolation.sql','customer-portal.sql','global-admin.sql'])sql+='\n'+readFileSync(join(root,'tests/db',file),'utf8');
+ for(const file of ['tenant-isolation.sql','customer-portal.sql','global-admin.sql','notifications.sql','subscription-lifecycle.sql'])sql+='\n'+readFileSync(join(root,'tests/db',file),'utf8');
  sql+='\nROLLBACK;';
  execFileSync(join(bin,'psql'),['-h',dir,'-U',userInfo().username,'-d','postgres','-v','ON_ERROR_STOP=1','-q'],{input:sql,stdio:['pipe','pipe','pipe']});
  console.log('All migrations and tenant, portal and global-admin SQL checks passed in isolated PostgreSQL.');

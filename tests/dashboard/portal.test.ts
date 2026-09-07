@@ -1,6 +1,6 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {createApp} from '../../src/http/app.js';
-const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,createUser:vi.fn(),getUser:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),order:vi.fn(),range:vi.fn()}}));
+const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,createUser:vi.fn(),getUser:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
 vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,signInWithOtp:mocks.otp}})}));
 vi.mock('../../src/config/supabase.js',()=>({getSupabaseClient:()=>({from:mocks.from,rpc:mocks.rpc,auth:{admin:{createUser:mocks.createUser}}})}));
 const tenant='11111111-1111-4111-8111-111111111111';const other='22222222-2222-4222-8222-222222222222';
@@ -11,6 +11,7 @@ beforeEach(async()=>{
  mocks.otp.mockResolvedValue({error:null});mocks.rpc.mockResolvedValue({error:null});
  mocks.from.mockImplementation(table=>['audit_admins','audit_portal_users'].includes(table)?{select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:table==='audit_admins'?(mocks.isAdmin?{user_id:'user-1'}:null):{enabled:mocks.enabled},error:null})})})}:table==='audit_memberships'?{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,audit_tenants:{id:tenant,name:'Company'}}],error:null})})}:mocks.query);
  mocks.query.select.mockReturnValue(mocks.query);mocks.query.eq.mockReturnValue(mocks.query);mocks.query.order.mockReturnValue(mocks.query);mocks.query.range.mockResolvedValue({data:[],count:0,error:null});
+ mocks.query.maybeSingle.mockResolvedValue({data:null,error:null});
  server=createApp({secret:'whsec_'+Buffer.from('test-secret-32-bytes-long-12345678').toString('base64'),enqueue:async()=>{},ready:async()=>true});
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -30,6 +31,8 @@ it('requires review note and uses verified identity for atomic action',async()=>
 it('reports stale job conflicts without leaking database details',async()=>{mocks.rpc.mockResolvedValue({error:{message:'private SQL'}});const r=await fetch(base+`/api/portal/jobs/${other}/retry?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({note:'Reviewed details'})});expect(r.status).toBe(409);expect(await r.text()).not.toContain('private');});
 it('records a confirmed avoided loss using the authenticated user',async()=>{const r=await fetch(base+`/api/portal/exceptions/${other}/resolve?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({outcome:'avoided',avoided_amount:875.25,note:'Duplicate charge canceled before payment'})});expect(r.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('portal_resolve_exception',{p_user:'user-1',p_tenant:tenant,p_exception:other,p_outcome:'avoided',p_avoided_amount:875.25,p_note:'Duplicate charge canceled before payment'});});
 it('does not allow an avoided-loss claim without a confirmed amount',async()=>{const r=await fetch(base+`/api/portal/exceptions/${other}/resolve?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({outcome:'avoided',avoided_amount:null,note:'Charge reviewed by accounting'})});expect(r.status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_resolve_exception',expect.anything());});
+it('saves report recipients and time zone under the authenticated membership',async()=>{const r=await fetch(base+`/api/portal/settings/notifications?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({timezone:'America/Chicago',report_emails:['OPS@example.com','owner@example.com']})});expect(r.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('portal_save_notification_settings',{p_user:'user-1',p_tenant:tenant,p_timezone:'America/Chicago',p_report_emails:['ops@example.com','owner@example.com']});});
+it('does not let a non-owner change subscription billing',async()=>{mocks.query.maybeSingle.mockResolvedValue({data:{billing_email:'owner@example.com',stripe_customer_id:'cus_1',stripe_subscription_id:'sub_1',status:'active'},error:null});const r=await fetch(base+`/api/portal/billing/cancel?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_record_billing_action',expect.anything());});
 it('clears session at logout',async()=>{const r=await fetch(base+'/api/portal/logout',{method:'POST',headers,body:'{}'});expect(r.headers.get('set-cookie')).toContain('Max-Age=0');});
 
 it('reports a verified admin role without requiring company memberships',async()=>{mocks.isAdmin=true;const r=await fetch(base+'/api/portal/me',{headers});expect((await r.json()).is_admin).toBe(true);});
