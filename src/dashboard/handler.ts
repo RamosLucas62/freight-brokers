@@ -5,6 +5,7 @@ import {createClient} from '@supabase/supabase-js';
 import {z} from 'zod';
 import {adminAction} from './admin.js';
 import {getSupabaseClient} from '../config/supabase.js';
+import {createCheckoutSession,retrieveCheckoutSession} from '../billing/stripe.js';
 
 const uuid=z.string().uuid();
 const limits=new Map<string,{count:number,until:number}>();
@@ -15,7 +16,7 @@ async function body(req:IncomingMessage) {
 }
 export async function dashboard(req:IncomingMessage,res:ServerResponse):Promise<boolean>{
  const url=new URL(req.url??'/', 'http://localhost');
- const assets:Record<string,[string,string]>={'/':['index.html','text/html'],'/auth/callback':['index.html','text/html'],'/dashboard.js':['dashboard.js','text/javascript'],'/dashboard.css':['dashboard.css','text/css'],'/admin.js':['admin.js','text/javascript']};
+ const assets:Record<string,[string,string]>={'/':['index.html','text/html'],'/onboarding':['index.html','text/html'],'/auth/callback':['index.html','text/html'],'/dashboard.js':['dashboard.js','text/javascript'],'/dashboard.css':['dashboard.css','text/css'],'/admin.js':['admin.js','text/javascript']};
  const asset=assets[url.pathname];
  if(!asset&&!url.pathname.startsWith('/api/portal/'))return false;
  const send=(status:number,data:unknown)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
@@ -40,6 +41,35 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse):Promise<
  // Do not reveal whether a customer email is registered.
  if(error&&error.status&&error.status>=500){send(503,{error:'Unable to request a sign-in link. Please try again.'});return true;}
  send(200,{ok:true});return true;
+ }
+ if(url.pathname==='/api/portal/checkout'&&req.method==='POST'){
+ const input=z.object({email:z.string().email().max(254)}).parse(await body(req));
+ try{const session=await createCheckoutSession(input.email.toLowerCase());send(200,{url:session.url});}
+ catch{send(503,{error:'Checkout is still being configured. Contact your account administrator.'});}
+ return true;
+ }
+ if(url.pathname==='/api/portal/onboarding'&&req.method==='POST'){
+ const input=z.object({session_id:z.string().startsWith('cs_').max(255),company_name:z.string().trim().min(2).max(200),email:z.string().email().max(254)}).parse(await body(req));
+ const checkout=await retrieveCheckoutSession(input.session_id);
+ if(checkout.payment_status!=='paid'||checkout.status!=='complete'){send(402,{error:'Payment is not complete yet.'});return true;}
+ const email=input.email.toLowerCase();
+ const slugBase=input.company_name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,45)||'customer';
+ const db=getSupabaseClient();
+ const existing=await db.rpc('portal_onboarding_user_id',{p_email:email});
+ let userId=existing.data as string|null;
+ if(!userId){
+  const user=await db.auth.admin.createUser({email,email_confirm:false});
+  userId=user.data.user?.id??null;
+  if(user.error||!userId)throw new Error('Could not create user');
+ }
+ let result:{data:any,error:any}|undefined;
+ for(let i=0;i<8;i++){
+  result=await db.rpc('portal_complete_onboarding',{p_session_id:input.session_id,p_company_name:input.company_name,p_alias:i?`${slugBase}-${i+1}`:slugBase,p_user_id:userId,p_email:email,p_stripe_customer_id:String(checkout.customer??''),p_stripe_subscription_id:String(checkout.subscription??'')});
+  if(!result.error)break;
+ }
+ if(result?.error)throw result.error;
+ await auth().auth.signInWithOtp({email,options:{shouldCreateUser:false,emailRedirectTo:new URL('/auth/callback',origin).href}});
+ send(200,result?.data);return true;
  }
  if(url.pathname==='/api/portal/session'&&req.method==='POST'){
  const {access_token}=z.object({access_token:z.string().min(20).max(12000)}).parse(await body(req));

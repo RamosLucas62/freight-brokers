@@ -19,8 +19,22 @@ $('login-form').addEventListener('submit',async event=>{
  try{await api('login',{method:'POST',body:JSON.stringify({email:$('email').value.trim()})});$('login-message').textContent='If this email is registered, you will receive a sign-in link. Please also check your spam folder.';}
  catch(error){$('login-message').textContent=error.message;}finally{button.disabled=false;}
 });
+$('checkout-form').addEventListener('submit',async event=>{
+ event.preventDefault();const button=event.submitter;button.disabled=true;$('checkout-message').textContent='Opening secure checkout…';
+ try{const data=await api('checkout',{method:'POST',body:JSON.stringify({email:$('checkout-email').value.trim()})});location.assign(data.url);}
+ catch(error){$('checkout-message').textContent=error.message;}finally{button.disabled=false;}
+});
+$('onboarding-form').addEventListener('submit',async event=>{
+ event.preventDefault();const params=new URLSearchParams(location.search);const button=event.submitter;button.disabled=true;$('onboarding-message').textContent='Creating your account…';
+ try{
+  const data=await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:$('onboarding-email').value.trim()})});
+  $('onboarding-message').innerHTML=`Account created. Send invoices to <strong>${escape(data.audit_email)}</strong>. Check your inbox for the portal sign-in link.`;
+ }
+ catch(error){$('onboarding-message').textContent=error.message;}finally{button.disabled=false;}
+});
 async function initialize(){
  try{
+ if(location.pathname==='/onboarding'){$('signin-panel').hidden=true;$('onboarding-panel').hidden=false;return;}
  const hash=new URLSearchParams(location.hash.slice(1));
  if(hash.has('error_description')){history.replaceState(null,'','/');throw new Error('This link has expired or has already been used. Request a new link.');}
  if(hash.has('access_token')){const access_token=hash.get('access_token');history.replaceState(null,'','/');await api('session',{method:'POST',body:JSON.stringify({access_token})});}

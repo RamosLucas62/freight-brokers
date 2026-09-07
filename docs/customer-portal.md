@@ -10,6 +10,18 @@ O servidor existente serve o painel em `/`, sem serviço de frontend separado. O
 4. Criar o usuário proprietário no Supabase Auth e executar `node scripts/bootstrap-admin.cjs SEU_EMAIL` com o ambiente de backend configurado. O comando atribui o primeiro administrador somente se nenhum administrador existir. Em seguida, o proprietário pode cadastrar clientes e usuários pelo painel. Não há administrador padrão nem promoção por domínio de e-mail.
 5. Executar `npm run build` e `npm run start:server`, ou reconstruir a imagem Docker. Habilitar `WORKER_ENABLED=true` no serviço responsável pela fila para processar reenvios.
 
+## Assinatura e onboarding
+
+O portal pode iniciar uma assinatura via Stripe Checkout. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` e `STRIPE_PRICE_ID` no ambiente de execução. O botão de novo cliente envia o usuário ao Checkout; após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`. O backend consulta a sessão no Stripe antes de criar qualquer empresa ativa.
+
+No onboarding, o cliente informa nome da empresa e e-mail de acesso. O backend cria ou reutiliza o usuário no Supabase Auth, cria a empresa ativa, vincula o usuário e retorna o endereço único de recebimento em `audit.aiolympian.com`. Em seguida envia um magic link para o e-mail informado.
+
+Configure no Stripe o webhook:
+
+`https://portal.aiolympian.com/webhooks/stripe`
+
+Eventos usados: `checkout.session.completed`, `customer.subscription.updated` e `customer.subscription.deleted`. Assinaturas vencidas pausam a empresa; cancelamentos inativam a empresa.
+
 ## Comportamento
 
 - Link mágico sem senha; o token é validado no servidor e guardado em cookie HttpOnly, SameSite=Lax e Secure em HTTPS. O fragmento de autenticação é removido imediatamente da URL. A sessão dura até uma hora, limitada pela validade do token Supabase; ao expirar é solicitado novo link. Não há refresh token no navegador.
