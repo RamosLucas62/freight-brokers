@@ -111,7 +111,7 @@ Foram confirmados três registros novos, seis alertas e o relatório persistido.
 
 ## Contas e isolamento (2026-09-06)
 
-A migração `db/migrations/002_tenant_isolation.sql` cria empresas (`audit_tenants`), vínculos de usuários (`audit_memberships`) e contatos (`audit_report_contacts`). Aliases são exclusivos no domínio audit.aiolympian.com. Contatos novos não são considerados verificados; a confirmação por e-mail será implementada na integração Resend. `listReportRecipients` retorna somente contatos habilitados e verificados.
+A migração `db/migrations/002_tenant_isolation.sql` cria empresas (`audit_tenants`), vínculos de usuários (`audit_memberships`) e contatos (`audit_report_contacts`). Aliases são exclusivos no domínio audit.aiolympian.com. Contatos adicionados no onboarding pago são verificados nesse fluxo; `listReportRecipients` retorna somente contatos habilitados e verificados.
 
 `createTenant`, `setTenantStatus` e `addReportContact` são funções administrativas de backend em `src/db/tenants.repo.ts`. Não são endpoints públicos. Contas nascem inativas; Stripe ainda não controla seu estado. RLS permite somente leitura por usuários vinculados à empresa. Cadastro, associação, verificação de contato e alteração de estado são exclusivos do backend.
 
@@ -129,7 +129,9 @@ Validação: 108 testes automatizados e compilação aprovados; migração e tes
 
 A entrada Resend e a fila de processamento estão implementadas, usando Cloudflare R2 privado para PDFs e Supabase para fila e metadados. Aguardam implantação em `api.audit.aiolympian.com` e migração 003 no Supabase. Guia completo: [EasyPanel, R2 e Resend](docs/easypanel-resend.md). Execute `npm run start:server` para o servidor; o comando `npm start` continua sendo a auditoria manual. `WORKER_ENABLED=false` aceita eventos sem iniciar extração paga.
 
-Validação atual: 132 testes passaram. Entrega de relatório por e-mail, Stripe e interface continuam pendentes.
+O envio automático por Resend está implementado na migração 007: resumo diário às 07:00 no fuso do cliente, fechamento no primeiro dia útil, alertas imediatos de alta severidade e anexos PDF/CSV. Reenvios usam uma fila durável e chave de idempotência. Configure `RESEND_FROM_EMAIL`, aplique as migrações e mantenha `WORKER_ENABLED=true`.
+
+Validação atual: 166 testes passaram, a compilação TypeScript foi aprovada e a migração 007 passou em PostgreSQL temporário com rollback. Ela ainda precisa ser aplicada no Supabase do ambiente.
 
 ## Painel do cliente
 

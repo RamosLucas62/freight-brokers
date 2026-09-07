@@ -1,6 +1,6 @@
 # Implantação do backend no EasyPanel com Cloudflare R2
 
-Backend preparado para `https://api.audit.aiolympian.com`. Este guia publica o recebimento e a auditoria dos anexos. Envio automático dos relatórios, Stripe e painel ainda não fazem parte desta versão.
+Backend preparado para `https://api.audit.aiolympian.com`. Este guia publica o recebimento, a auditoria dos anexos e o envio automático de relatórios pelo Resend. Stripe e painel são descritos em `customer-portal.md`.
 
 ## 1. Preparar o banco
 
@@ -38,6 +38,8 @@ No Resend → Webhooks → Add Webhook, cadastre:
 
 `https://api.audit.aiolympian.com/webhooks/resend`
 
+Para o envio dos relatórios, configure também `RESEND_FROM_EMAIL` com um remetente do domínio verificado no Resend, por exemplo `reports@audit.aiolympian.com`. O mesmo `RESEND_API_KEY` é usado para receber anexos e enviar alertas.
+
 Selecione somente **email.received**. Copie o **Signing secret** desse webhook para `RESEND_WEBHOOK_SECRET`. Ele não é a chave de API.
 
 No Resend → API Keys, use uma chave com acesso de leitura aos e-mails recebidos/anexos (uma chave limitada apenas a envio não atende). Coloque-a em `RESEND_API_KEY`. Não envie chaves pelo chat nem as coloque no pacote de upload.
@@ -64,6 +66,8 @@ CARRIER_CACHE_TTL_HOURS=4
 LOW_CONFIDENCE_THRESHOLD=0.85
 RESEND_API_KEY=CHAVE_RESEND
 RESEND_WEBHOOK_SECRET=SEGREDO_DO_WEBHOOK
+RESEND_FROM_EMAIL=reports@audit.aiolympian.com
+PORTAL_URL=https://portal.audit.aiolympian.com
 WORKER_ENABLED=false
 ```
 
