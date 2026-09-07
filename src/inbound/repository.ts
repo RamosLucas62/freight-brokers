@@ -42,6 +42,10 @@ export async function cacheExtraction(job:InboundJob,id:string,result:InvoiceExt
  .eq('tenant_id',job.tenant_id).eq('job_id',job.id).eq('attachment_id',id);
  if(error)throw new Error('EXTRACTION_CACHE_FAILED');
 }
+export async function recordBillableInvoice(job:InboundJob,id:string,documentHash:string):Promise<boolean>{
+ const {data,error}=await getSupabaseClient().rpc('record_billable_invoice',{p_tenant:job.tenant_id,p_job:job.id,p_attachment:id,p_document_hash:documentHash});
+ if(error)throw new Error('USAGE_RECORD_FAILED');return Boolean(data);
+}
 export async function storedExtractions(job:InboundJob):Promise<Map<string,InvoiceExtractionResult>> {
  const {data,error}=await getSupabaseClient().from('audit_inbound_attachments').select('attachment_id,extraction').eq('tenant_id',job.tenant_id).eq('job_id',job.id);
  if(error)throw new Error('EXTRACTION_CACHE_FAILED');

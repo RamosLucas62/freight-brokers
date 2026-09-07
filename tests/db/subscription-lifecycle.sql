@@ -6,7 +6,10 @@ BEGIN
  ON CONFLICT(tenant_id) WHERE tenant_id IS NOT NULL DO UPDATE SET stripe_subscription_id='sub_lifecycle',billing_email='billing@example.com',status='active',last_stripe_event_created=0;
 
  SELECT public.process_stripe_billing_event('evt_failed','invoice.payment_failed',100,'{"subscription":"sub_lifecycle"}') INTO result;
- IF NOT result OR (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'paused' THEN RAISE EXCEPTION 'Payment failure did not pause tenant'; END IF;
+ IF NOT result OR (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'active' OR NOT EXISTS(SELECT 1 FROM public.audit_billing_customers WHERE tenant_id=tenant AND status='past_due' AND payment_grace_until>now()+interval '71 hours') THEN RAISE EXCEPTION 'Payment failure did not start grace period'; END IF;
+ UPDATE public.audit_billing_customers SET payment_grace_until=now()-interval '1 minute' WHERE tenant_id=tenant;
+ PERFORM public.suspend_expired_payment_grace();
+ IF (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'paused' THEN RAISE EXCEPTION 'Expired grace did not pause tenant'; END IF;
  SELECT public.process_stripe_billing_event('evt_paid','invoice.paid',101,'{"subscription":"sub_lifecycle"}') INTO result;
  IF (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'active' THEN RAISE EXCEPTION 'Paid invoice did not reactivate tenant'; END IF;
  SELECT public.process_stripe_billing_event('evt_paid','invoice.paid',101,'{"subscription":"sub_lifecycle"}') INTO result;

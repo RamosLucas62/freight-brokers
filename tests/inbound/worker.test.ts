@@ -1,5 +1,5 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
-vi.mock('../../src/inbound/repository.js',()=>({savedReport:vi.fn(),finish:vi.fn(),saveAttachment:vi.fn(),storedExtractions:vi.fn(),cacheExtraction:vi.fn()}));
+vi.mock('../../src/inbound/repository.js',()=>({savedReport:vi.fn(),finish:vi.fn(),saveAttachment:vi.fn(),storedExtractions:vi.fn(),cacheExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
 vi.mock('../../src/db/audit.repo.js',()=>({createAuditStore:vi.fn()}));
 vi.mock('../../src/pipeline/audit.pipeline.js',()=>({runAuditPipeline:vi.fn()}));
 vi.mock('../../src/extraction/index.js',()=>({extractor:{extract:vi.fn()}}));

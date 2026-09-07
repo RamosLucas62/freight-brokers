@@ -1,4 +1,5 @@
 import {getSupabaseClient} from '../config/supabase.js';
+import {selectionFromPriceId} from './plans.js';
 
 export interface StripeEvent {id:string;type:string;created?:number;data?:{object?:Record<string,unknown>}}
 interface StripeQueueItem {event_id:string;event_type:string;event_created:number;payload:StripeEvent;}
@@ -24,5 +25,13 @@ export async function processStripeEvent(event:StripeEvent){
   p_event_id:event.id,p_event_type:event.type,p_event_created:event.created??0,p_object:event.data.object,
  });
  if(error)throw error;
+ if(event.type==='customer.subscription.updated'){
+  const object=event.data.object;const metadata=typeof object.metadata==='object'&&object.metadata?object.metadata as Record<string,unknown>:{};
+  const items=typeof object.items==='object'&&object.items?object.items as {data?:Array<{price?:{id?:unknown}}>}:{},selection=selectionFromPriceId(items.data?.[0]?.price?.id);
+  const plan=selection?.plan??metadata.plan_code,period=selection?.period??metadata.billing_period;
+  if((plan==='core'||plan==='scale')&&(period==='monthly'||period==='semiannual'||period==='annual')){
+   const synced=await getSupabaseClient().rpc('sync_billing_plan_from_stripe',{p_subscription_id:String(object.id??''),p_plan:plan,p_period:period});if(synced.error)throw synced.error;
+  }
+ }
  return Boolean(data);
 }

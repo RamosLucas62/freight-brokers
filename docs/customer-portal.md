@@ -12,11 +12,11 @@ O servidor existente serve o painel em `/`, sem serviço de frontend separado. O
 
 ## Assinatura e onboarding
 
-O portal pode iniciar uma assinatura via Stripe Checkout. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` e `STRIPE_PRICE_ID` no ambiente de execução. O botão de novo cliente envia o usuário ao Checkout; após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`. O backend consulta a sessão no Stripe antes de criar qualquer empresa ativa.
+O portal pode iniciar uma assinatura via Stripe Checkout. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` e os seis IDs `STRIPE_PRICE_CORE_*` / `STRIPE_PRICE_SCALE_*` descritos em [pricing-and-usage.md](pricing-and-usage.md). O botão de novo cliente envia o usuário ao Checkout; após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`. O backend consulta a sessão no Stripe antes de criar qualquer empresa ativa.
 
 Configure também `STRIPE_RETENTION_COUPON_ID` com um cupom Stripe de **15% e duração `once`** e `STRIPE_PORTAL_CONFIGURATION_ID` com uma configuração dedicada do Customer Portal. Nessa configuração, habilite troca de forma de pagamento e histórico de faturas, mas deixe o cancelamento de assinatura desabilitado: o cancelamento deve passar pelo fluxo de retenção do próprio portal.
 
-No endpoint Stripe `/webhooks/stripe`, assine pelo menos `checkout.session.completed`, `invoice.payment_failed`, `invoice.paid`, `customer.subscription.updated` e `customer.subscription.deleted`. Falha de pagamento pausa o processamento; pagamento confirmado reativa; assinatura encerrada inativa a conta e agenda a eliminação dos dados operacionais após 30 dias.
+No endpoint Stripe `/webhooks/stripe`, assine pelo menos `checkout.session.completed`, `invoice.payment_failed`, `invoice.paid`, `customer.subscription.updated` e `customer.subscription.deleted`. Falha de pagamento inicia três dias de carência e depois pausa o processamento; pagamento confirmado reativa; assinatura encerrada inativa a conta e agenda a eliminação dos dados operacionais após 30 dias.
 
 Em **Settings & billing**, o responsável financeiro pode abrir o Customer Portal, receber o desconto único, pausar por 30 dias (uma vez a cada 12 meses) ou agendar o cancelamento para o fim do período pago. A exclusão definitiva remove PDFs do R2, faturas, exceções, relatórios, destinatários e acessos; permanece apenas um registro mínimo anonimizado de cobrança e da execução da exclusão.
 
