@@ -35,14 +35,17 @@ const Config=z.object({
  METRICS_TOKEN:z.string().min(32),
  CSRF_SECRET:z.string().min(32),
  OPENROUTER_ALLOWED_MODELS:z.string().min(1),OPENROUTER_DATA_PROCESSING_ACK:z.literal('true'),
- FREE_AUDIT_ORIGIN:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_PUBLIC_URL:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_OFFER_URL:z.string().url(),
+ FREE_AUDIT_ORIGIN:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_ORIGINS:z.string().optional(),FREE_AUDIT_PUBLIC_URL:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_OFFER_URL:z.string().url(),
 });
 const parsed=Config.safeParse(process.env);
 if(!parsed.success){failure('server.configuration.invalid',new Error('INVALID_SERVER_CONFIGURATION'),{invalid_variables:parsed.error.issues.map(i=>i.path.join('.'))});process.exit(1);}
 const config=parsed.data;
 if(new URL(config.PORTAL_URL).protocol!=='https:'){failure('server.configuration.invalid',new Error('PORTAL_URL_HTTPS_REQUIRED'),{invalid_variables:['PORTAL_URL']});process.exit(1);}
 const limiter=createRateLimiter(config.REDIS_URL);
-const freeAudit=createFreeAuditHttpHandler({allowedOrigin:config.FREE_AUDIT_ORIGIN,publicUrl:config.FREE_AUDIT_PUBLIC_URL,offerUrl:config.FREE_AUDIT_OFFER_URL});
+let allowedOrigins:string[];
+try{allowedOrigins=[...new Set((config.FREE_AUDIT_ORIGINS??config.FREE_AUDIT_ORIGIN).split(',').map(value=>new URL(value.trim()).origin))];}
+catch{failure('server.configuration.invalid',new Error('FREE_AUDIT_ORIGINS_INVALID'),{invalid_variables:['FREE_AUDIT_ORIGINS']});process.exit(1);}
+const freeAudit=createFreeAuditHttpHandler({allowedOrigins,publicUrl:config.FREE_AUDIT_PUBLIC_URL,offerUrl:config.FREE_AUDIT_OFFER_URL});
 const server=createApp({secret:config.RESEND_WEBHOOK_SECRET,enqueue,limiter,freeAudit,ready:async()=>{
  const {error}=await getSupabaseClient().from('audit_inbound_jobs').select('id',{head:true}).limit(1);
  return !error;

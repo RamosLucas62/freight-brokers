@@ -70,25 +70,25 @@ async function pdfsFromFiles(files:File[]):Promise<PdfUpload[]>{
  return [...unique.values()];
 }
 
-function cors(req:IncomingMessage,res:ServerResponse,allowedOrigin:string):boolean{
+function cors(req:IncomingMessage,res:ServerResponse,allowedOrigins:string[]):boolean{
  const origin=typeof req.headers.origin==='string'?req.headers.origin:'';
- if(origin!==allowedOrigin)return false;
- res.setHeader('Access-Control-Allow-Origin',allowedOrigin);res.setHeader('Cross-Origin-Resource-Policy','cross-origin');res.setHeader('Vary','Origin');
+ if(!allowedOrigins.includes(origin))return false;
+ res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Cross-Origin-Resource-Policy','cross-origin');res.setHeader('Vary','Origin');
  return true;
 }
 
-export function createFreeAuditHttpHandler(config:{allowedOrigin:string;publicUrl:string;offerUrl:string}){
+export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publicUrl:string;offerUrl:string}){
  return async(req:IncomingMessage,res:ServerResponse,limiter:RateLimiter):Promise<boolean>=>{
   const url=new URL(req.url??'/',config.publicUrl);const submit=url.pathname==='/webhooks/free-audit';const verify=url.pathname==='/free-audit/verify';
   if(!submit&&!verify)return false;
   const ip=clientIp(req.headers,req.socket.remoteAddress);
   if(submit&&req.method==='OPTIONS'){
-   if(!cors(req,res,config.allowedOrigin)){respond(res,403,{error:'origin_not_allowed'});return true;}
+   if(!cors(req,res,config.allowedOrigins)){respond(res,403,{error:'origin_not_allowed'});return true;}
    res.writeHead(204,{'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600'});res.end();return true;
   }
   if(submit&&req.method==='POST'){
    const traceId=requestId(req);
-   if(!cors(req,res,config.allowedOrigin)){warn('free_audit.submission.rejected',{request_id:traceId,reason:'origin_not_allowed'});respond(res,403,{error:'origin_not_allowed'});req.resume();return true;}
+   if(!cors(req,res,config.allowedOrigins)){warn('free_audit.submission.rejected',{request_id:traceId,reason:'origin_not_allowed'});respond(res,403,{error:'origin_not_allowed'});req.resume();return true;}
    try{
     const ipRate=await limiter.consume({scope:'free-audit-ip',key:ip,limit:3,windowSeconds:86400,failClosed:true});
     if(!ipRate.allowed){warn('free_audit.submission.rate_limited',{request_id:traceId,scope:'ip',retry_after_seconds:ipRate.retryAfter});res.setHeader('Retry-After',String(ipRate.retryAfter));respond(res,429,{error:'too_many_requests'});req.resume();return true;}

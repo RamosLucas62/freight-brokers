@@ -32,11 +32,12 @@ Apply migration `011_free_audit_lead_flow.sql`, then configure:
 
 ```dotenv
 FREE_AUDIT_ORIGIN=https://aiolympian.com
+FREE_AUDIT_ORIGINS=https://aiolympian.com,https://www.aiolympian.com
 FREE_AUDIT_PUBLIC_URL=https://api.audit.aiolympian.com
 FREE_AUDIT_OFFER_URL=https://aiolympian.com/pricing
 ```
 
-`FREE_AUDIT_ORIGIN` must be the exact browser origin hosting the form. It is the only origin allowed by CORS. `FREE_AUDIT_PUBLIC_URL` creates email-verification links. `FREE_AUDIT_OFFER_URL` is used in the result email and in the email sent after a repeat request.
+`FREE_AUDIT_ORIGIN` remains the required primary browser origin. Set optional `FREE_AUDIT_ORIGINS` to a comma-separated allowlist when the form is served from more than one exact origin. No wildcard origins are accepted. `FREE_AUDIT_PUBLIC_URL` creates email-verification links. `FREE_AUDIT_OFFER_URL` is used in the result email and in the email sent after a repeat request. Successful submissions intentionally return `202 Accepted`; browser `response.ok` treats that status as success.
 
 ## Security and lifecycle
 
