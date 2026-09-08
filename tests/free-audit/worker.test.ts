@@ -1,6 +1,6 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
-const mocks=vi.hoisted(()=>({claimRequest:vi.fn(),finishRequest:vi.fn(),loadAttachments:vi.fn(),saveResult:vi.fn()}));
-vi.mock('../../src/free-audit/repository.js',()=>({...mocks,registerRequest:vi.fn(),saveAttachment:vi.fn(),clearAttachments:vi.fn(),markUploaded:vi.fn(),releaseOffer:vi.fn(),failUpload:vi.fn(),verifyRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn()}));
+const mocks=vi.hoisted(()=>({claimRequest:vi.fn(),finishRequest:vi.fn(),loadAttachments:vi.fn(),saveResult:vi.fn(),issueRetry:vi.fn()}));
+vi.mock('../../src/free-audit/repository.js',()=>({...mocks,registerRequest:vi.fn(),saveAttachment:vi.fn(),clearAttachments:vi.fn(),markUploaded:vi.fn(),releaseOffer:vi.fn(),failUpload:vi.fn(),verifyRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn(),inspectRetry:vi.fn(),beginRetry:vi.fn(),finishRetry:vi.fn(),failRetry:vi.fn()}));
 import {processFreeAudit} from '../../src/free-audit/worker.js';
 const report={run_id:'11111111-1111-4111-8111-111111111111',generated_at:new Date().toISOString(),total_invoices_processed:1,total_exceptions:0,valor_total_under_review:0,exceptions:[]};
 const request={id:'11111111-1111-4111-8111-111111111111',email:'lead@example.com',contact_name:'Lead',company_name:'Acme',phone:null,loads_per_month:null,status:'processing',attempts:1,result:report};
@@ -19,6 +19,8 @@ describe('free audit worker delivery',()=>{
   const pending={...request,result:null};mocks.claimRequest.mockResolvedValue(pending);mocks.loadAttachments.mockResolvedValue([]);const sender={send:vi.fn().mockResolvedValue('email-2')};
   await expect(processFreeAudit(sender as any,'https://example.com/audit')).rejects.toThrow('NO_FREE_AUDIT_ATTACHMENTS');
   expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({idempotencyKey:`free-audit-failure-${request.id}-1`,to:['lead@example.com'],subject:expect.stringContaining('Action needed'),attachments:[]}));
+  expect(mocks.issueRetry).toHaveBeenCalledWith(request.id,expect.stringMatching(/^[a-f0-9]{64}$/));
+  expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({html:expect.stringContaining('/free-audit/retry?token=')}));
   expect(mocks.finishRequest).toHaveBeenCalledWith(pending,expect.any(Error),false);
  });
  it('does not replace a report-delivery retry with a failure notice',async()=>{

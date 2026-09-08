@@ -45,6 +45,32 @@ export async function verifyRequest(tokenHash:string):Promise<string|null>{
  return typeof data==='string'&&data?data:null;
 }
 
+export async function issueRetry(requestId:string,retryTokenHash:string):Promise<void>{
+ const {data,error}=await getSupabaseClient().rpc('issue_free_audit_retry',{p_request:requestId,p_token_hash:retryTokenHash});
+ if(error||!data)throw new Error('FREE_AUDIT_RETRY_ISSUE_FAILED');
+}
+
+export async function inspectRetry(retryTokenHash:string):Promise<boolean>{
+ const {data,error}=await getSupabaseClient().rpc('inspect_free_audit_retry',{p_token_hash:retryTokenHash});
+ if(error)throw new Error('FREE_AUDIT_RETRY_INSPECT_FAILED');
+ return data===true;
+}
+
+export async function beginRetry(retryTokenHash:string):Promise<string|null>{
+ const {data,error}=await getSupabaseClient().rpc('begin_free_audit_retry',{p_token_hash:retryTokenHash});
+ if(error)throw new Error('FREE_AUDIT_RETRY_BEGIN_FAILED');
+ return typeof data==='string'&&data?data:null;
+}
+
+export async function finishRetry(requestId:string,retryTokenHash:string):Promise<void>{
+ const {data,error}=await getSupabaseClient().rpc('finish_free_audit_retry',{p_request:requestId,p_token_hash:retryTokenHash});
+ if(error||!data)throw new Error('FREE_AUDIT_RETRY_FINISH_FAILED');
+}
+
+export async function failRetry(requestId:string,retryTokenHash:string):Promise<void>{
+ await getSupabaseClient().rpc('fail_free_audit_retry',{p_request:requestId,p_token_hash:retryTokenHash});
+}
+
 export async function claimRequest():Promise<FreeAuditRequest|null>{
  const {data,error}=await getSupabaseClient().rpc('claim_free_audit_request');
  if(error)throw new Error('FREE_AUDIT_QUEUE_FAILED');
@@ -79,7 +105,7 @@ export async function claimExpired():Promise<string|null>{
 export async function expireRequest(requestId:string):Promise<void>{
  const removed=await getSupabaseClient().from('free_audit_attachments').delete().eq('request_id',requestId);
  if(removed.error)throw new Error('FREE_AUDIT_RETENTION_FAILED');
- const {error}=await getSupabaseClient().from('free_audit_requests').update({email:`expired+${requestId.replaceAll('-','')}@invalid.local`,contact_name:'Deleted lead',company_name:'Deleted lead',phone:null,loads_per_month:null,ip_fingerprint:'0'.repeat(64),status:'expired',retention_status:'expired',result:null,verification_token_hash:null,last_error:null,updated_at:new Date().toISOString()}).eq('id',requestId).eq('retention_status','deleting');
+ const {error}=await getSupabaseClient().from('free_audit_requests').update({email:`expired+${requestId.replaceAll('-','')}@invalid.local`,contact_name:'Deleted lead',company_name:'Deleted lead',phone:null,loads_per_month:null,ip_fingerprint:'0'.repeat(64),status:'expired',retention_status:'expired',result:null,verification_token_hash:null,retry_token_hash:null,retry_expires_at:null,retry_claimed_at:null,last_error:null,updated_at:new Date().toISOString()}).eq('id',requestId).eq('retention_status','deleting');
  if(error)throw new Error('FREE_AUDIT_RETENTION_FAILED');
 }
 

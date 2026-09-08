@@ -39,6 +39,12 @@ FREE_AUDIT_OFFER_URL=https://aiolympian.com/pricing
 
 `FREE_AUDIT_ORIGIN` remains the required primary browser origin. Set optional `FREE_AUDIT_ORIGINS` to a comma-separated allowlist when the form is served from more than one exact origin. No wildcard origins are accepted. `FREE_AUDIT_PUBLIC_URL` creates email-verification links. `FREE_AUDIT_OFFER_URL` is used in the result email and in the email sent after a repeat request. Successful submissions intentionally return `202 Accepted`; browser `response.ok` treats that status as success.
 
+## Failed-file recovery
+
+Migration `013_free_audit_secure_retry.sql` adds a file-only recovery flow. When processing fails before a report exists, the customer receives a 256-bit, single-use link valid for 72 hours. The link opens `GET /free-audit/retry`; the form posts replacement PDFs or a ZIP to the same route. Contact and consent data remain server-side and are not placed in the URL or requested again. A successful replacement upload consumes the token and queues the audit without another email-confirmation step.
+
+Expected structured events are `free_audit.retry.opened`, `free_audit.retry.completed`, `free_audit.retry.rejected`, and `free_audit.retry.failed`.
+
 ## Security and lifecycle
 
 - An IP and an email can submit at most three requests per 24 hours.

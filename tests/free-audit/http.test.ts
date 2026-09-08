@@ -3,9 +3,10 @@ import {createServer} from 'node:http';
 
 const mocks=vi.hoisted(()=>({
  registerRequest:vi.fn(),saveAttachment:vi.fn(),markUploaded:vi.fn(),failUpload:vi.fn(),verifyRequest:vi.fn(),releaseOffer:vi.fn(),
+ inspectRetry:vi.fn(),beginRetry:vi.fn(),finishRetry:vi.fn(),failRetry:vi.fn(),clearAttachments:vi.fn(),loadAttachments:vi.fn(),
  putInvoiceObject:vi.fn(),deleteInvoiceObjects:vi.fn(),sendSecurityEmail:vi.fn(),verifyTurnstile:vi.fn(),
 }));
-vi.mock('../../src/free-audit/repository.js',()=>({...mocks,claimRequest:vi.fn(),loadAttachments:vi.fn(),saveResult:vi.fn(),finishRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn()}));
+vi.mock('../../src/free-audit/repository.js',()=>({...mocks,claimRequest:vi.fn(),saveResult:vi.fn(),finishRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn(),issueRetry:vi.fn()}));
 vi.mock('../../src/security/turnstile.js',()=>({verifyTurnstile:mocks.verifyTurnstile}));
 vi.mock('../../src/storage/r2.js',()=>({freeAuditObjectKey:(r:string,a:string)=>`free-audits/${r}/${a}.pdf`,putInvoiceObject:mocks.putInvoiceObject,deleteInvoiceObjects:mocks.deleteInvoiceObjects}));
 vi.mock('../../src/notifications/security.sender.js',()=>({sendSecurityEmail:mocks.sendSecurityEmail}));
@@ -14,7 +15,7 @@ import {createFreeAuditHttpHandler} from '../../src/free-audit/http.js';
 const limiter={consume:vi.fn(async()=>({allowed:true,limit:3,remaining:2,retryAfter:60})),close:vi.fn(async()=>{})};
 let server:ReturnType<typeof createServer>;let base:string;
 beforeEach(async()=>{
- vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);
+ vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);mocks.loadAttachments.mockResolvedValue([]);
  const handler=createFreeAuditHttpHandler({allowedOrigins:['https://aiolympian.com','https://www.aiolympian.com'],publicUrl:'https://api.audit.aiolympian.com',offerUrl:'https://aiolympian.com/pricing'});
  server=createServer((req,res)=>void handler(req,res,limiter));await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -52,6 +53,20 @@ describe('free audit public boundary',()=>{
  });
  it('queues the audit only for a valid one-time confirmation token',async()=>{
   mocks.verifyRequest.mockResolvedValue('11111111-1111-4111-8111-111111111111');const token='a'.repeat(43);
-  const response=await fetch(base+`/free-audit/verify?token=${token}`);expect(response.status).toBe(200);expect(await response.text()).toContain('audit has started');expect(mocks.verifyRequest).toHaveBeenCalledOnce();
+  const response=await fetch(base+`/free-audit/verify?token=${token}`);expect(response.status).toBe(200);expect(await response.text()).toContain('audit is underway');expect(mocks.verifyRequest).toHaveBeenCalledOnce();
+ });
+ it('renders a branded confirmation page compatible with the restrictive CSP',async()=>{
+  mocks.verifyRequest.mockResolvedValue('11111111-1111-4111-8111-111111111111');const response=await fetch(base+`/free-audit/verify?token=${'a'.repeat(43)}`);const html=await response.text();
+  expect(html).toContain('Your audit is underway');expect(html).toContain('class="card"');expect(response.headers.get('content-security-policy')).toMatch(/style-src 'nonce-[A-Za-z0-9_-]+'/);
+ });
+ it('lets a failed verified lead upload replacement files without entering contact data again',async()=>{
+  const token='b'.repeat(43);mocks.inspectRetry.mockResolvedValue(true);mocks.beginRetry.mockResolvedValue('11111111-1111-4111-8111-111111111111');mocks.finishRetry.mockResolvedValue(undefined);
+  const opened=await fetch(base+`/free-audit/retry?token=${token}`);const uploadPage=await opened.text();expect(uploadPage).toContain('Your name, company, email and audit details are already saved');expect(uploadPage).not.toContain('name="email"');
+  const replacement=new FormData();replacement.append('files',new Blob([Buffer.from('%PDF-1.4 replacement')],{type:'application/pdf'}),'replacement.pdf');
+  const uploaded=await fetch(base+`/free-audit/retry?token=${token}`,{method:'POST',body:replacement});expect(uploaded.status).toBe(200);expect(await uploaded.text()).toContain('Your new files are in');
+  expect(mocks.beginRetry).toHaveBeenCalledOnce();expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.finishRetry).toHaveBeenCalledOnce();expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+ });
+ it('does not expose the replacement form for an expired retry token',async()=>{
+  mocks.inspectRetry.mockResolvedValue(false);const response=await fetch(base+`/free-audit/retry?token=${'c'.repeat(43)}`);expect(response.status).toBe(400);expect(await response.text()).not.toContain('type="file"');
  });
 });

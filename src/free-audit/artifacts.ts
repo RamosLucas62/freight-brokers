@@ -13,14 +13,14 @@ export function repeatOfferEmail(name:string,offerUrl:string){
 }
 
 export type FreeAuditFailureKind='invalid_document'|'unsafe_document'|'too_large'|'temporary_error';
-export function failureEmail(name:string,kind:FreeAuditFailureKind,offerUrl:string){
+export function failureEmail(name:string,kind:FreeAuditFailureKind,retryUrl:string){
  const copy={
   invalid_document:{heading:'We could not read one of your invoice files',body:'One or more files were not a valid, readable PDF. Export the original document again as a standard, unencrypted PDF and submit the audit again.'},
   unsafe_document:{heading:'We could not safely process one of your files',body:'Our document security check rejected one or more files. Remove passwords, embedded files, scripts or other active content, export a clean PDF, and submit the audit again.'},
   too_large:{heading:'One or more files exceeded the upload limits',body:'Each PDF must be 20 MB or smaller, with no more than 100 MB total. Reduce or split the files and submit the audit again.'},
   temporary_error:{heading:'We could not complete your audit',body:'A temporary processing problem stopped this audit. Your free audit was not consumed. Please submit the files again; if the problem continues, reply to this email and our team will help.'},
  }[kind];
- return {subject:`Action needed for your Olympian free audit`,html:`<!doctype html><html><body style="font-family:Arial,sans-serif;color:#171717;line-height:1.5;max-width:640px;margin:auto;padding:24px"><p style="color:#ef5427;font-weight:bold">OLYMPIAN FREE AUDIT</p><h1 style="font-size:25px">${copy.heading}</h1><p>Hi ${escapeHtml(name)}, ${copy.body}</p><p style="margin:28px 0"><a href="${escapeHtml(offerUrl)}" style="background:#ef5427;color:white;padding:13px 18px;border-radius:5px;text-decoration:none;font-weight:bold">Return to Olympian</a></p><p style="font-size:12px;color:#666">For security, we do not include internal system details or document contents in email. Files remain subject to the stated retention period.</p></body></html>`};
+ return {subject:`Action needed for your Olympian free audit`,html:`<!doctype html><html><body style="font-family:Arial,sans-serif;color:#171717;line-height:1.5;max-width:640px;margin:auto;padding:24px"><p style="color:#ef5427;font-weight:bold">OLYMPIAN FREE AUDIT</p><h1 style="font-size:25px">${copy.heading}</h1><p>Hi ${escapeHtml(name)}, ${copy.body}</p><p>Your contact details are saved. Use the secure link below and upload only the replacement files.</p><p style="margin:28px 0"><a href="${escapeHtml(retryUrl)}" style="background:#ef5427;color:white;padding:13px 18px;border-radius:5px;text-decoration:none;font-weight:bold">Upload replacement files</a></p><p style="font-size:12px;color:#666">This private link expires in 72 hours and can be used once. For security, we do not include internal system details or document contents in email.</p></body></html>`};
 }
 
 function exceptionRows(exceptions:ReportException[]):string{
