@@ -1,0 +1,53 @@
+api:
+  enabled: true
+  address: 0.0.0.0:8686
+
+sources:
+  easypanel_containers:
+    type: docker_logs
+    docker_host: unix:///var/run/docker.sock
+    exclude_containers:
+      - better-stack-vector
+
+transforms:
+  parse_freight_audit_json:
+    type: remap
+    inputs:
+      - easypanel_containers
+    source: |
+      structured, error = parse_json(.message)
+      if error == null && is_object(structured) {
+        . = merge(., structured)
+      }
+
+  keep_freight_audit:
+    type: filter
+    inputs:
+      - parse_freight_audit_json
+    condition: '.service == "freight-audit"'
+
+  remove_healthcheck_noise:
+    type: filter
+    inputs:
+      - keep_freight_audit
+    condition: '!(.event == "http.request.completed" && includes(["/healthz", "/readyz"], .path))'
+
+sinks:
+  better_stack:
+    type: http
+    method: post
+    inputs:
+      - remove_healthcheck_noise
+    uri: https://${BETTER_STACK_INGESTING_HOST}/
+    compression: gzip
+    encoding:
+      codec: json
+    auth:
+      strategy: bearer
+      token: ${BETTER_STACK_SOURCE_TOKEN}
+    acknowledgements:
+      enabled: true
+    buffer:
+      type: disk
+      max_size: 268435456
+      when_full: drop_newest
