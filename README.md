@@ -8,6 +8,8 @@ O cliente receberá um endereço exclusivo em `audit.aiolympian.com` e encaminha
 
 O recebimento pelo Resend, armazenamento privado no R2, relatórios diários/mensais, assinatura Stripe, planos Core/Scale e portal estão implementados. Consulte [preços e cobrança por uso](docs/pricing-and-usage.md). A implantação de produção exige as migrações, Redis, Turnstile e o scanner privado de PDFs descritos no [guia de segurança](docs/security-production.md).
 
+O funil público de auditoria gratuita usa `POST /webhooks/free-audit`, exige confirmação do e-mail e concede uma única auditoria por endereço. Solicitações repetidas recebem a oferta dos planos sem que novos documentos sejam armazenados. Consulte [integração da página e segurança](docs/free-audit-webhook.md).
+
 ## Preparação
 
 Use Node.js 22 ou posterior. Na pasta do projeto, rode `npm install` e copie `.env.example` para `.env`. Preencha localmente as credenciais; não as envie por chat nem as coloque no Git.

@@ -50,6 +50,11 @@ describe('audit transaction boundary', () => {
     await writeFile(join(dir, 'a.pdf'), 'not PDF');
     await expect(runAuditPipeline(options())).rejects.toThrow('Not a PDF');
   });
+  it('excludes invoices older than the free-audit window before evaluating rules', async () => {
+    const opts=options();opts.minimumInvoiceDate='2026-08-08';
+    const report=await runAuditPipeline(opts);
+    expect(report.total_invoices_processed).toBe(0);expect(report.skipped_files).toEqual([join(dir,'a.pdf')]);expect(opts.store.commit).not.toHaveBeenCalled();
+  });
   it('propagates atomic commit failure instead of reporting success', async () => {
     const opts = options(); opts.store.commit = vi.fn(async () => { throw new Error('history changed'); });
     await expect(runAuditPipeline(opts)).rejects.toThrow('history changed');

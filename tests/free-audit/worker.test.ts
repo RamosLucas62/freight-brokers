@@ -1,0 +1,18 @@
+import {beforeEach,describe,expect,it,vi} from 'vitest';
+const mocks=vi.hoisted(()=>({claimRequest:vi.fn(),finishRequest:vi.fn(),loadAttachments:vi.fn(),saveResult:vi.fn()}));
+vi.mock('../../src/free-audit/repository.js',()=>({...mocks,registerRequest:vi.fn(),saveAttachment:vi.fn(),clearAttachments:vi.fn(),markUploaded:vi.fn(),releaseOffer:vi.fn(),failUpload:vi.fn(),verifyRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn()}));
+import {processFreeAudit} from '../../src/free-audit/worker.js';
+const report={run_id:'11111111-1111-4111-8111-111111111111',generated_at:new Date().toISOString(),total_invoices_processed:1,total_exceptions:0,valor_total_under_review:0,exceptions:[]};
+const request={id:'11111111-1111-4111-8111-111111111111',email:'lead@example.com',contact_name:'Lead',company_name:'Acme',phone:null,loads_per_month:null,status:'processing',attempts:1,result:report};
+beforeEach(()=>vi.clearAllMocks());
+describe('free audit worker delivery',()=>{
+ it('reuses a saved result and sends the report with a stable idempotency key',async()=>{
+  mocks.claimRequest.mockResolvedValue(request);const sender={send:vi.fn().mockResolvedValue('email-1')};
+  await expect(processFreeAudit(sender as any,'https://example.com/plans')).resolves.toBe(true);
+  expect(mocks.loadAttachments).not.toHaveBeenCalled();expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({idempotencyKey:`free-audit-result-${request.id}`,to:['lead@example.com'],attachments:expect.arrayContaining([expect.objectContaining({filename:'olympian-free-audit.pdf'})])}));expect(mocks.finishRequest).toHaveBeenCalledWith(request);
+ });
+ it('retries only delivery when a persisted report email fails',async()=>{
+  mocks.claimRequest.mockResolvedValue(request);const failure=new Error('mail offline');const sender={send:vi.fn().mockRejectedValue(failure)};
+  await expect(processFreeAudit(sender as any,'https://example.com/plans')).rejects.toThrow('mail offline');expect(mocks.finishRequest).toHaveBeenCalledWith(request,failure,true);
+ });
+});
