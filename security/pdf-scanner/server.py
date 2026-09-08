@@ -14,6 +14,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(json.dumps({"component":"pdf-scanner","message":fmt % args}))
     def reply(self, status, payload):
+        print(json.dumps({"component":"pdf-scanner","event":"scan.completed","status_code":status,"safe":payload.get("safe",False),"reason":payload.get("reason"),"page_count":payload.get("page_count",0)}),flush=True)
         body=json.dumps(payload).encode(); self.send_response(status); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
     def do_POST(self):
         self.connection.settimeout(30)
@@ -32,8 +33,9 @@ class Handler(BaseHTTPRequestHandler):
             virus=command(["clamscan","--no-summary",path],18)
             if virus.returncode != 0:
                 self.reply(422,{"safe":False,"page_count":0,"reason":"malware" if virus.returncode==1 else "scanner_error"}); return
-            checked=command(["qpdf","--check",path])
-            if checked.returncode != 0 or "encrypted" in (checked.stdout+checked.stderr).lower():
+            checked=command(["qpdf","--check","--warning-exit-0",path])
+            encrypted=command(["qpdf","--is-encrypted",path])
+            if checked.returncode != 0 or encrypted.returncode == 0:
                 self.reply(422,{"safe":False,"page_count":0,"reason":"invalid_or_encrypted"}); return
             raw=command(["strings",path]).stdout
             if re.search(r"/(JavaScript|JS|Launch|EmbeddedFile|OpenAction|AA)\b",raw):
