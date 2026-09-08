@@ -8,12 +8,19 @@ import {extractor} from '../extraction/index.js';
 import {getCarrier} from '../carrier/index.js';
 import type {AuditStore} from '../db/audit.repo.js';
 import {ResendSender} from '../notifications/resend.sender.js';
-import {freeAuditCsv,freeAuditPdf,resultEmail} from './artifacts.js';
+import {failureEmail,freeAuditCsv,freeAuditPdf,resultEmail,type FreeAuditFailureKind} from './artifacts.js';
 import * as repository from './repository.js';
 import {failure,info} from '../observability/logger.js';
 
 const transientStore:AuditStore={async assertActive(){},async history(){return [];},async commit(){}};
 function minimumDate(now=new Date()){const date=new Date(now);date.setUTCDate(date.getUTCDate()-30);return date.toISOString().slice(0,10);}
+function failureKind(error:unknown):FreeAuditFailureKind{
+ const code=error instanceof Error?error.message.toUpperCase():'';
+ if(/(TOO_LARGE|PAGE_LIMIT)/.test(code))return 'too_large';
+ if(/(INVALID_OR_ENCRYPTED|INVALID_PDF|FORMAT|NO_FREE_AUDIT_ATTACHMENTS)/.test(code))return 'invalid_document';
+ if(/(MALWARE|ACTIVE_CONTENT)/.test(code))return 'unsafe_document';
+ return 'temporary_error';
+}
 
 export async function processFreeAudit(sender:ResendSender,offerUrl:string):Promise<boolean>{
  const request=await repository.claimRequest();if(!request)return false;
@@ -37,7 +44,15 @@ export async function processFreeAudit(sender:ResendSender,offerUrl:string):Prom
   const email=resultEmail(request.contact_name,request.company_name,report,offerUrl);
   stage='send_result';await sender.send({idempotencyKey:`free-audit-result-${request.id}`,to:[request.email],...email,attachments:[{filename:'olympian-free-audit.pdf',content:freeAuditPdf(request.company_name,report)},{filename:'olympian-free-audit.csv',content:freeAuditCsv(report)}]});
   stage='finish_request';await repository.finishRequest(request);info('free_audit.worker.completed',{audit_request_id:request.id,duration_ms:Date.now()-started,invoice_count:report.total_invoices_processed,exception_count:report.total_exceptions});return true;
- }catch(error){failure('free_audit.worker.failed',error,{audit_request_id:request.id,stage,duration_ms:Date.now()-started,report_ready:reportReady});await repository.finishRequest(request,error,reportReady);throw error;}
+ }catch(error){
+  failure('free_audit.worker.failed',error,{audit_request_id:request.id,stage,duration_ms:Date.now()-started,report_ready:reportReady});
+  if(!reportReady){
+   const kind=failureKind(error);const retryUrl=new URL('/free-audit.html',offerUrl).href;const notice=failureEmail(request.contact_name,kind,retryUrl);
+   try{await sender.send({idempotencyKey:`free-audit-failure-${request.id}-${request.attempts}`,to:[request.email],...notice,attachments:[]});info('free_audit.failure_email.sent',{audit_request_id:request.id,failure_kind:kind});}
+   catch(notificationError){failure('free_audit.failure_email.failed',notificationError,{audit_request_id:request.id,failure_kind:kind});}
+  }
+  await repository.finishRequest(request,error,reportReady);throw error;
+ }
  finally{if(dir)await rm(dir,{recursive:true,force:true});}
 }
 
