@@ -13,6 +13,7 @@ import {readBody,securityHeaders,HttpError} from '../security/http.js';
 import {createHash,createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 import {sendSecurityEmail} from '../notifications/security.sender.js';
 import {plans,planFromMetadata,periodFromMetadata} from '../billing/plans.js';
+import {failure,requestId} from '../observability/logger.js';
 
 const uuid=z.string().uuid();
 async function body(req:IncomingMessage) {
@@ -301,6 +302,6 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(error)throw error;send(200,{rows:data,total:count,page});return true;
  }
  send(404,{error:'Page not found.'});
- }catch(error){const message=error instanceof Error?error.message:'';console.error('[portal] Request failed',JSON.stringify({path:url.pathname,name:error instanceof Error?error.name:'UnknownError',code:/^[A-Z0-9_]{1,80}$/.test(message)?message:'REQUEST_FAILED'}));send(error instanceof HttpError?error.status:error instanceof z.ZodError||error instanceof SyntaxError?400:503,{error:'Unable to complete the request. Check your information and try again.'});}
+ }catch(error){failure('portal.request.failed',error,{request_id:requestId(req),path:url.pathname,method:req.method});send(error instanceof HttpError?error.status:error instanceof z.ZodError||error instanceof SyntaxError?400:503,{error:'Unable to complete the request. Check your information and try again.'});}
  return true;
 }

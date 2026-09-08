@@ -10,35 +10,41 @@ import {runAuditPipeline} from '../pipeline/audit.pipeline.js';
 import {ExtractionResultSchema} from '../extraction/schema.js';
 import {scanPdf} from '../security/pdf.js';
 import {createHash} from 'node:crypto';
+import {failure,info,warn} from '../observability/logger.js';
 
 export async function processJob(job:repository.InboundJob,client:ResendReceivingClient) {
  let dir:string|undefined;
+ let stage='saved_report_lookup';const started=Date.now();info('inbound.worker.started',{job_id:job.id,tenant_id:job.tenant_id,email_id:job.email_id});
  try {
   const previous=await repository.savedReport(job);
-  if(previous){await repository.finish(job,'completed',previous,null);return;}
+  if(previous){await repository.finish(job,'completed',previous,null);info('inbound.worker.completed',{job_id:job.id,tenant_id:job.tenant_id,reused_report:true,duration_ms:Date.now()-started});return;}
+  stage='account_check';
   const store=createAuditStore(job.tenant_id);
-  try{await store.assertActive();}catch{await repository.finish(job,'blocked',null,'ACCOUNT_UNAVAILABLE');return;}
+  try{await store.assertActive();}catch(error){warn('inbound.worker.blocked',{job_id:job.id,tenant_id:job.tenant_id,stage,reason:'ACCOUNT_UNAVAILABLE'});await repository.finish(job,'blocked',null,'ACCOUNT_UNAVAILABLE');return;}
+  stage='resend_metadata';
   const metadata=typeof (client as {metadata?:unknown}).metadata==='function'?await client.metadata(job.email_id):{automatic:await client.isAutomatic(job.email_id),from:'unknown@invalid.local',authenticated:true};
-  if(metadata.automatic){await repository.finish(job,'ignored',null,'AUTOMATIC_EMAIL');return;}
-  if(!metadata.authenticated){await repository.finish(job,'blocked',null,'SENDER_AUTHENTICATION_FAILED');return;}
-  if(metadata.from!=='unknown@invalid.local')try{await repository.authorizeInbound(job,metadata.from);}catch{await repository.finish(job,'blocked',null,'SENDER_NOT_AUTHORIZED_OR_QUOTA');return;}
+  if(metadata.automatic){info('inbound.worker.ignored',{job_id:job.id,tenant_id:job.tenant_id,reason:'AUTOMATIC_EMAIL'});await repository.finish(job,'ignored',null,'AUTOMATIC_EMAIL');return;}
+  if(!metadata.authenticated){warn('inbound.worker.blocked',{job_id:job.id,tenant_id:job.tenant_id,reason:'SENDER_AUTHENTICATION_FAILED'});await repository.finish(job,'blocked',null,'SENDER_AUTHENTICATION_FAILED');return;}
+  if(metadata.from!=='unknown@invalid.local')try{stage='sender_authorization';await repository.authorizeInbound(job,metadata.from);}catch{warn('inbound.worker.blocked',{job_id:job.id,tenant_id:job.tenant_id,reason:'SENDER_NOT_AUTHORIZED_OR_QUOTA'});await repository.finish(job,'blocked',null,'SENDER_NOT_AUTHORIZED_OR_QUOTA');return;}
+  stage='list_attachments';
   const attachments=await client.attachments(job.email_id);
   const pdfs=attachments.filter(a=>a.content_type==='application/pdf' || a.filename?.toLowerCase().endsWith('.pdf'));
-  if(!pdfs.length){await repository.finish(job,'ignored',null,'NO_PDF_ATTACHMENTS');return;}
+  if(!pdfs.length){info('inbound.worker.ignored',{job_id:job.id,tenant_id:job.tenant_id,reason:'NO_PDF_ATTACHMENTS'});await repository.finish(job,'ignored',null,'NO_PDF_ATTACHMENTS');return;}
   if(pdfs.reduce((sum,a)=>sum+a.size,0)>40*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
   dir=await mkdtemp(join(tmpdir(),'audit-email-'));
   const paths:string[]=[];const labels:Record<string,string>={};const hashes=new Map<string,string>();let bytesTotal=0;
   // Download and persist every PDF before any paid extraction.
   for(const attachment of pdfs){
-   const bytes=await client.download(attachment);bytesTotal+=bytes.length;
+   stage='download_attachment';const bytes=await client.download(attachment);bytesTotal+=bytes.length;
    if(bytesTotal>40*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
-   await scanPdf(bytes);
-   await repository.saveAttachment(job,attachment.id,attachment.filename??'invoice.pdf',bytes);
+   stage='scan_pdf';await scanPdf(bytes);
+   stage='store_attachment';await repository.saveAttachment(job,attachment.id,attachment.filename??'invoice.pdf',bytes);
    hashes.set(attachment.id,createHash('sha256').update(bytes).digest('hex'));
    const path=join(dir,`${attachment.id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);
    labels[path]=`resend/${job.email_id}/${attachment.id}.pdf`;
   }
-  const cached=await repository.storedExtractions(job);
+  stage='load_extraction_cache';const cached=await repository.storedExtractions(job);
+  stage='audit_pipeline';
   const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:paths,sourceLabels:labels,
    ctx:{run_id:job.id,carrierCache:new Map(),cacheTtlHours:Number(process.env.CARRIER_CACHE_TTL_HOURS??4)},
    getCarrier,store,extractor:{async extract(path){
@@ -53,14 +59,14 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   });
   // Duplicate-only runs are kept in the job result even when no new audit_run is needed.
   if(attachments.length!==pdfs.length)report.warnings?.push(`${attachments.length-pdfs.length} non-PDF attachments were not processed.`);
-  await repository.finish(job,'completed',report,null);
+  stage='finish_job';await repository.finish(job,'completed',report,null);info('inbound.worker.completed',{job_id:job.id,tenant_id:job.tenant_id,duration_ms:Date.now()-started,pdf_count:pdfs.length,invoice_count:report.total_invoices_processed,exception_count:report.total_exceptions});
  }catch(error){
   // A failed/uncertain paid call is never automatically repeated. Review before requeueing.
   const detail=error instanceof Error?error.message:'unknown_error';
   const status=typeof error==='object' && error!==null && '$metadata' in error
    ? (error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode
    : undefined;
-  console.error('[worker] Job failed',JSON.stringify({jobId:job.id,stage:detail,status}));
+  failure('inbound.worker.failed',error,{job_id:job.id,tenant_id:job.tenant_id,stage,provider_detail:/^[A-Z0-9_]{3,100}$/.test(detail)?detail:'PROVIDER_ERROR',upstream_status:status,duration_ms:Date.now()-started});
   await repository.finish(job,'needs_review',null,'PROCESSING_FAILED');
  }finally{if(dir)await rm(dir,{recursive:true,force:true});}
 }
@@ -68,7 +74,7 @@ export function startWorker(client:ResendReceivingClient) {
  let stopping=false;let running:Promise<void>|null=null;
  const tick=()=>{if(stopping||running)return;running=(async()=>{
   try{const job=await repository.claim();if(job)await processJob(job,client);}
-  catch{console.error('[worker] Queue or processing update failed; inspect audit_inbound_jobs.');}
+  catch(error){failure('inbound.worker.tick_failed',error,{action:'claim_or_update_queue'});}
  })().finally(()=>{running=null;});};
  const timer=setInterval(tick,3000);tick();
  return async()=>{stopping=true;clearInterval(timer);await running;};

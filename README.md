@@ -10,6 +10,8 @@ O recebimento pelo Resend, armazenamento privado no R2, relatórios diários/men
 
 O funil público de auditoria gratuita usa `POST /webhooks/free-audit`, exige confirmação do e-mail e concede uma única auditoria por endereço. Solicitações repetidas recebem a oferta dos planos sem que novos documentos sejam armazenados. Consulte [integração da página e segurança](docs/free-audit-webhook.md).
 
+Os serviços emitem logs JSON correlacionados e sem conteúdo documental ou credenciais. Consulte [logs de produção](docs/production-logs.md).
+
 ## Preparação
 
 Use Node.js 22 ou posterior. Na pasta do projeto, rode `npm install` e copie `.env.example` para `.env`. Preencha localmente as credenciais; não as envie por chat nem as coloque no Git.
