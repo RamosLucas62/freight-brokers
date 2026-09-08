@@ -1,4 +1,5 @@
 import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {randomBytes,createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {getPrivateObject} from '../storage/r2.js';
@@ -22,7 +23,7 @@ function failureKind(error:unknown):FreeAuditFailureKind{
  return 'temporary_error';
 }
 
-export async function processFreeAudit(sender:ResendSender,offerUrl:string):Promise<boolean>{
+export async function processFreeAudit(sender:ResendSender,offerUrl:string,publicUrl=offerUrl):Promise<boolean>{
  const request=await repository.claimRequest();if(!request)return false;
  let dir:string|undefined;
  let reportReady=Boolean(request.result);
@@ -47,8 +48,9 @@ export async function processFreeAudit(sender:ResendSender,offerUrl:string):Prom
  }catch(error){
   failure('free_audit.worker.failed',error,{audit_request_id:request.id,stage,duration_ms:Date.now()-started,report_ready:reportReady});
   if(!reportReady){
-   const kind=failureKind(error);const retryUrl=new URL('/free-audit.html',offerUrl).href;const notice=failureEmail(request.contact_name,kind,retryUrl);
-   try{await sender.send({idempotencyKey:`free-audit-failure-${request.id}-${request.attempts}`,to:[request.email],...notice,attachments:[]});info('free_audit.failure_email.sent',{audit_request_id:request.id,failure_kind:kind});}
+   const kind=failureKind(error);const retryToken=randomBytes(32).toString('base64url');
+   const retryUrl=new URL('/free-audit/retry',publicUrl);retryUrl.searchParams.set('token',retryToken);const notice=failureEmail(request.contact_name,kind,retryUrl.href);
+   try{await repository.issueRetry(request.id,createHash('sha256').update(retryToken).digest('hex'));await sender.send({idempotencyKey:`free-audit-failure-${request.id}-${request.attempts}`,to:[request.email],...notice,attachments:[]});info('free_audit.failure_email.sent',{audit_request_id:request.id,failure_kind:kind});}
    catch(notificationError){failure('free_audit.failure_email.failed',notificationError,{audit_request_id:request.id,failure_kind:kind});}
   }
   await repository.finishRequest(request,error,reportReady);throw error;
@@ -56,9 +58,9 @@ export async function processFreeAudit(sender:ResendSender,offerUrl:string):Prom
  finally{if(dir)await rm(dir,{recursive:true,force:true});}
 }
 
-export function startFreeAuditWorker(sender:ResendSender,offerUrl:string){
+export function startFreeAuditWorker(sender:ResendSender,offerUrl:string,publicUrl=offerUrl){
  let stopped=false,running:Promise<void>|null=null;
- const tick=()=>{if(stopped||running)return;running=(async()=>{try{for(let i=0;i<3&&await processFreeAudit(sender,offerUrl);i++);}catch(error){failure('free_audit.worker.tick_failed',error);}})().finally(()=>{running=null;});};
+ const tick=()=>{if(stopped||running)return;running=(async()=>{try{for(let i=0;i<3&&await processFreeAudit(sender,offerUrl,publicUrl);i++);}catch(error){failure('free_audit.worker.tick_failed',error);}})().finally(()=>{running=null;});};
  tick();const timer=setInterval(tick,10_000);timer.unref();
  return async()=>{stopped=true;clearInterval(timer);await running;};
 }
