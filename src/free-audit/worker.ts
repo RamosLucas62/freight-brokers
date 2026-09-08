@@ -23,7 +23,7 @@ function failureKind(error:unknown):FreeAuditFailureKind{
  return 'temporary_error';
 }
 
-export async function processFreeAudit(sender:ResendSender,offerUrl:string,publicUrl=offerUrl):Promise<boolean>{
+export async function processFreeAudit(sender:ResendSender,signupUrl:string,publicUrl=signupUrl):Promise<boolean>{
  const request=await repository.claimRequest();if(!request)return false;
  let dir:string|undefined;
  let reportReady=Boolean(request.result);
@@ -42,7 +42,7 @@ export async function processFreeAudit(sender:ResendSender,offerUrl:string,publi
    stage='save_result';await repository.saveResult(request.id,report);
    reportReady=true;
   }
-  const email=resultEmail(request.contact_name,request.company_name,report,offerUrl);
+  const email=resultEmail(request.contact_name,request.company_name,report,signupUrl);
   stage='send_result';await sender.send({idempotencyKey:`free-audit-result-${request.id}`,to:[request.email],...email,attachments:[{filename:'olympian-free-audit.pdf',content:freeAuditPdf(request.company_name,report)},{filename:'olympian-free-audit.csv',content:freeAuditCsv(report)}]});
   stage='finish_request';await repository.finishRequest(request);info('free_audit.worker.completed',{audit_request_id:request.id,duration_ms:Date.now()-started,invoice_count:report.total_invoices_processed,exception_count:report.total_exceptions});return true;
  }catch(error){
@@ -58,9 +58,9 @@ export async function processFreeAudit(sender:ResendSender,offerUrl:string,publi
  finally{if(dir)await rm(dir,{recursive:true,force:true});}
 }
 
-export function startFreeAuditWorker(sender:ResendSender,offerUrl:string,publicUrl=offerUrl){
+export function startFreeAuditWorker(sender:ResendSender,signupUrl:string,publicUrl=signupUrl){
  let stopped=false,running:Promise<void>|null=null;
- const tick=()=>{if(stopped||running)return;running=(async()=>{try{for(let i=0;i<3&&await processFreeAudit(sender,offerUrl,publicUrl);i++);}catch(error){failure('free_audit.worker.tick_failed',error);}})().finally(()=>{running=null;});};
+ const tick=()=>{if(stopped||running)return;running=(async()=>{try{for(let i=0;i<3&&await processFreeAudit(sender,signupUrl,publicUrl);i++);}catch(error){failure('free_audit.worker.tick_failed',error);}})().finally(()=>{running=null;});};
  tick();const timer=setInterval(tick,10_000);timer.unref();
  return async()=>{stopped=true;clearInterval(timer);await running;};
 }
