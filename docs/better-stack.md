@@ -4,19 +4,17 @@ Esta integração envia somente os logs JSON cujo campo `service` seja `freight-
 
 ## 1. Criar a fonte
 
-No Better Stack, abra **Telemetry → Sources → Connect source**, escolha **Docker** e crie uma fonte para produção. Copie separadamente:
+No Better Stack, abra **Telemetry → Sources → Connect source**, escolha **Docker** e crie uma fonte para produção. O hostname desta fonte já está configurado no `vector.yaml`. Copie:
 
 - o **Source token**;
-- o **Ingesting host**, somente o hostname, sem `https://` e sem barra final.
 
-Não coloque nenhum desses valores no Git ou no arquivo `vector.yaml`.
+Não coloque o token no Git ou no arquivo `vector.yaml`.
 
 ## 2. Configurar no Easypanel
 
 Crie um serviço **Docker Compose** separado no mesmo servidor usando `deploy/betterstack/docker-compose.yml`. Execute o Compose a partir da pasta `deploy/betterstack`, pois o arquivo monta `./vector.yaml`. Configure estas variáveis no ambiente do serviço:
 
 ```dotenv
-BETTER_STACK_INGESTING_HOST=s000000.example.betterstackdata.com
 BETTER_STACK_SOURCE_TOKEN=TOKEN_DA_FONTE
 ```
 

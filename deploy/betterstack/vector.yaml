@@ -38,7 +38,7 @@ sinks:
     method: post
     inputs:
       - remove_healthcheck_noise
-    uri: https://${BETTER_STACK_INGESTING_HOST}/
+    uri: "https://s2746448.us-west-2a.betterstackdata.com/"
     compression: gzip
     encoding:
       codec: json
