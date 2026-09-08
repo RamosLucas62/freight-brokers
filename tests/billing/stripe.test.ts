@@ -8,15 +8,16 @@ beforeEach(()=>{
  vi.stubGlobal('fetch',fetchMock);vi.stubEnv('STRIPE_SECRET_KEY','sk_test_secret');vi.stubEnv('PORTAL_URL','https://portal.example.com');
  vi.stubEnv('STRIPE_PORTAL_CONFIGURATION_ID','bpc_customer');vi.stubEnv('STRIPE_RETENTION_COUPON_ID','coupon_15_once');
  vi.stubEnv('STRIPE_PRICE_CORE_MONTHLY','price_core_month');vi.stubEnv('STRIPE_PRICE_CORE_SEMIANNUAL','price_core_6');vi.stubEnv('STRIPE_PRICE_CORE_ANNUAL','price_core_year');
+ vi.stubEnv('STRIPE_PRICE_GROWTH_MONTHLY','price_growth_month');vi.stubEnv('STRIPE_PRICE_GROWTH_SEMIANNUAL','price_growth_6');vi.stubEnv('STRIPE_PRICE_GROWTH_ANNUAL','price_growth_year');
  vi.stubEnv('STRIPE_PRICE_SCALE_MONTHLY','price_scale_month');vi.stubEnv('STRIPE_PRICE_SCALE_SEMIANNUAL','price_scale_6');vi.stubEnv('STRIPE_PRICE_SCALE_ANNUAL','price_scale_year');
  fetchMock.mockResolvedValue({ok:true,json:async()=>({url:'https://billing.stripe.test/session'})});
 });
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();vi.clearAllMocks();});
 
 describe('Stripe subscription actions',()=>{
- it('selects one of the six server-side prices and stores plan metadata',async()=>{
-  await createCheckoutSession('buyer@example.com','scale','semiannual');const [,request]=fetchMock.mock.calls[0];const body=request.body as URLSearchParams;
-  expect(body.get('line_items[0][price]')).toBe('price_scale_6');expect(body.get('metadata[plan_code]')).toBe('scale');expect(body.get('subscription_data[metadata][billing_period]')).toBe('semiannual');
+ it('selects one of the nine server-side prices and stores plan metadata',async()=>{
+  await createCheckoutSession('buyer@example.com','growth','semiannual');const [,request]=fetchMock.mock.calls[0];const body=request.body as URLSearchParams;
+  expect(body.get('line_items[0][price]')).toBe('price_growth_6');expect(body.get('metadata[plan_code]')).toBe('growth');expect(body.get('subscription_data[metadata][billing_period]')).toBe('semiannual');
  });
  it('opens the restricted customer portal configuration',async()=>{
   await createBillingPortalSession('cus_123');const [,request]=fetchMock.mock.calls[0];const body=request.body as URLSearchParams;

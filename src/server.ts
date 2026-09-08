@@ -26,6 +26,7 @@ const Config=z.object({
  WORKER_ENABLED:z.enum(['true','false']).default('false'),
  STRIPE_SECRET_KEY:z.string().startsWith('sk_'),STRIPE_WEBHOOK_SECRET:z.string().startsWith('whsec_'),
  STRIPE_PRICE_CORE_MONTHLY:z.string().startsWith('price_'),STRIPE_PRICE_CORE_SEMIANNUAL:z.string().startsWith('price_'),STRIPE_PRICE_CORE_ANNUAL:z.string().startsWith('price_'),
+ STRIPE_PRICE_GROWTH_MONTHLY:z.string().startsWith('price_'),STRIPE_PRICE_GROWTH_SEMIANNUAL:z.string().startsWith('price_'),STRIPE_PRICE_GROWTH_ANNUAL:z.string().startsWith('price_'),
  STRIPE_PRICE_SCALE_MONTHLY:z.string().startsWith('price_'),STRIPE_PRICE_SCALE_SEMIANNUAL:z.string().startsWith('price_'),STRIPE_PRICE_SCALE_ANNUAL:z.string().startsWith('price_'),
  STRIPE_RETENTION_COUPON_ID:z.string().min(1),STRIPE_PORTAL_CONFIGURATION_ID:z.string().startsWith('bpc_'),
  REDIS_URL:z.string().url(),RATE_LIMIT_KEY_SECRET:z.string().min(32),

@@ -26,8 +26,8 @@ function form(){const value=new FormData();value.set('name','Lucas Ramos');value
 
 describe('free audit public boundary',()=>{
  it('creates Stripe checkout from the public pricing origin',async()=>{
-  const response=await fetch(base+'/checkout',{method:'POST',headers:{Origin:'https://aiolympian.com','Content-Type':'application/json'},body:JSON.stringify({email:'Buyer@Example.com',plan:'scale',period:'annual',turnstile_token:'verified'})});
-  expect(response.status).toBe(200);expect(response.headers.get('access-control-allow-origin')).toBe('https://aiolympian.com');expect(await response.json()).toEqual({url:'https://checkout.stripe.test/session'});expect(mocks.createCheckoutSession).toHaveBeenCalledWith('buyer@example.com','scale','annual');
+  const response=await fetch(base+'/checkout',{method:'POST',headers:{Origin:'https://aiolympian.com','Content-Type':'application/json'},body:JSON.stringify({email:'Buyer@Example.com',plan:'growth',period:'annual',turnstile_token:'verified'})});
+  expect(response.status).toBe(200);expect(response.headers.get('access-control-allow-origin')).toBe('https://aiolympian.com');expect(await response.json()).toEqual({url:'https://checkout.stripe.test/session'});expect(mocks.createCheckoutSession).toHaveBeenCalledWith('buyer@example.com','growth','annual');
  });
  it('rejects checkout requests from untrusted origins',async()=>{
   const response=await fetch(base+'/checkout',{method:'POST',headers:{Origin:'https://evil.example','Content-Type':'application/json'},body:'{}'});expect(response.status).toBe(403);expect(mocks.createCheckoutSession).not.toHaveBeenCalled();

@@ -1,6 +1,8 @@
 -- Run after tenant-isolation.sql in the --check transaction; never persists.
 INSERT INTO public.audit_inbound_jobs(id,tenant_id,email_id,status) VALUES
  ('50000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',gen_random_uuid(),'needs_review');
+INSERT INTO public.audit_billing_customers(tenant_id,billing_email,plan_code,included_invoices,overage_unit_amount_cents)
+ VALUES('10000000-0000-4000-8000-000000000001','owner@example.com','growth',1500,50);
 SET LOCAL ROLE authenticated;
 DO $$ BEGIN
  BEGIN

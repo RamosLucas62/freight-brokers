@@ -32,6 +32,7 @@ BEGIN
  EXCEPTION WHEN raise_exception THEN IF SQLERRM <> 'Cannot remove your own admin role' THEN RAISE; END IF; END;
  BEGIN PERFORM public.portal_admin_action(owner_id,'user.enable',jsonb_build_object('user_id',owner_id,'enabled',false)); RAISE EXCEPTION 'Self-disable allowed';
  EXCEPTION WHEN raise_exception THEN IF SQLERRM <> 'Cannot disable yourself' THEN RAISE; END IF; END;
+ INSERT INTO public.audit_billing_customers(tenant_id,billing_email,plan_code,included_invoices,overage_unit_amount_cents) VALUES(company_id,'admin-check-customer@example.com','growth',1500,50);
  INSERT INTO public.audit_inbound_jobs(id,tenant_id,email_id,status) VALUES('50000000-0000-4000-8000-000000000002',company_id,gen_random_uuid(),'needs_review');
  PERFORM public.portal_job_action(owner_id,company_id,'50000000-0000-4000-8000-000000000002','retry','Administrator verified document');
  IF NOT EXISTS(SELECT 1 FROM public.audit_job_reviews WHERE job_id='50000000-0000-4000-8000-000000000002' AND actor_role='admin' AND actor_email='admin-check-owner@example.com' AND user_id=owner_id) THEN RAISE EXCEPTION 'Admin attribution missing'; END IF;

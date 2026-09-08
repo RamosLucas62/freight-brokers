@@ -271,7 +271,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(action&&req.method==='POST'){
  if(!(await take({scope:'mutation-user-minute',key:user.user.id,limit:30,windowSeconds:60,failClosed:true})))return true;
  const job=uuid.parse(action[1]);const {note}=z.object({note:z.string().trim().min(5).max(2000)}).parse(await body(req));
- if(action[2]==='retry'){const currentPlan=await serviceDb.from('audit_billing_customers').select('plan_code').eq('tenant_id',tenant).maybeSingle();if(currentPlan.data?.plan_code!=='scale'){send(403,{error:'Exception reprocessing is available on the Scale plan.'});return true;}}
+ if(action[2]==='retry'){const currentPlan=await serviceDb.from('audit_billing_customers').select('plan_code').eq('tenant_id',tenant).maybeSingle();if(!plans[planFromMetadata(currentPlan.data?.plan_code)].reprocessing){send(403,{error:'Exception reprocessing is available on the Growth and Scale plans.'});return true;}}
  const {error}=await serviceDb.rpc('portal_job_action',{p_user:user.user.id,p_tenant:tenant,p_job:job,p_action:action[2],p_note:note});
  if(error){send(409,{error:'Unable to save. Check the current case status and try again.'});return true;}
  send(200,{ok:true});return true;
