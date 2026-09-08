@@ -2,7 +2,6 @@ services:
   better-stack-vector:
     image: timberio/vector:latest-alpine
     environment:
-      BETTER_STACK_INGESTING_HOST: ${BETTER_STACK_INGESTING_HOST}
       BETTER_STACK_SOURCE_TOKEN: ${BETTER_STACK_SOURCE_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
