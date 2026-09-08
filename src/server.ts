@@ -11,6 +11,7 @@ import {startBillingMaintenanceWorker} from './billing/maintenance.worker.js';
 import {createRateLimiter} from './security/rate-limit.js';
 import {createFreeAuditHttpHandler} from './free-audit/http.js';
 import {startFreeAuditWorker} from './free-audit/worker.js';
+import {failure,info} from './observability/logger.js';
 const Config=z.object({
  PORT:z.coerce.number().int().min(1).max(65535).default(3000),
  RESEND_WEBHOOK_SECRET:z.string().startsWith('whsec_').min(15),
@@ -37,9 +38,9 @@ const Config=z.object({
  FREE_AUDIT_ORIGIN:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_PUBLIC_URL:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_OFFER_URL:z.string().url(),
 });
 const parsed=Config.safeParse(process.env);
-if(!parsed.success){console.error('Invalid server configuration:',parsed.error.issues.map(i=>i.path.join('.')).join(', '));process.exit(1);}
+if(!parsed.success){failure('server.configuration.invalid',new Error('INVALID_SERVER_CONFIGURATION'),{invalid_variables:parsed.error.issues.map(i=>i.path.join('.'))});process.exit(1);}
 const config=parsed.data;
-if(new URL(config.PORTAL_URL).protocol!=='https:'){console.error('Invalid server configuration: PORTAL_URL must use HTTPS in production.');process.exit(1);}
+if(new URL(config.PORTAL_URL).protocol!=='https:'){failure('server.configuration.invalid',new Error('PORTAL_URL_HTTPS_REQUIRED'),{invalid_variables:['PORTAL_URL']});process.exit(1);}
 const limiter=createRateLimiter(config.REDIS_URL);
 const freeAudit=createFreeAuditHttpHandler({allowedOrigin:config.FREE_AUDIT_ORIGIN,publicUrl:config.FREE_AUDIT_PUBLIC_URL,offerUrl:config.FREE_AUDIT_OFFER_URL});
 const server=createApp({secret:config.RESEND_WEBHOOK_SECRET,enqueue,limiter,freeAudit,ready:async()=>{
@@ -54,12 +55,14 @@ const stopFreeAudits=config.WORKER_ENABLED==='true'
  ?startFreeAuditWorker(new ResendSender(config.RESEND_API_KEY,config.RESEND_FROM_EMAIL),config.FREE_AUDIT_OFFER_URL)
  :async()=>{};
 const stopBilling=config.WORKER_ENABLED==='true'?startBillingMaintenanceWorker():async()=>{};
-server.listen(config.PORT,'0.0.0.0',()=>console.log(`[server] Listening on port ${config.PORT}; worker=${config.WORKER_ENABLED}`));
+server.listen(config.PORT,'0.0.0.0',()=>info('server.started',{port:config.PORT,workers_enabled:config.WORKER_ENABLED==='true',node_env:process.env.NODE_ENV??'unknown'}));
 let closing=false;
 async function shutdown(){
- if(closing)return;closing=true;
+ if(closing)return;closing=true;info('server.shutdown.started');
  server.close();
  const deadline=setTimeout(()=>process.exit(1),25000);deadline.unref();
- await Promise.all([stopWorker(),stopNotifications(),stopFreeAudits(),stopBilling(),limiter.close()]);clearTimeout(deadline);process.exit(0);
+ await Promise.all([stopWorker(),stopNotifications(),stopFreeAudits(),stopBilling(),limiter.close()]);clearTimeout(deadline);info('server.shutdown.completed');process.exit(0);
 }
 process.on('SIGTERM',()=>void shutdown());process.on('SIGINT',()=>void shutdown());
+process.on('unhandledRejection',error=>failure('process.unhandled_rejection',error));
+process.on('uncaughtException',error=>{failure('process.uncaught_exception',error);process.exit(1);});

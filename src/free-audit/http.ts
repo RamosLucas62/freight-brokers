@@ -10,6 +10,7 @@ import {freeAuditObjectKey,putInvoiceObject,deleteInvoiceObjects} from '../stora
 import {sendSecurityEmail} from '../notifications/security.sender.js';
 import * as repository from './repository.js';
 import {repeatOfferEmail,verificationEmail} from './artifacts.js';
+import {failure,info,requestId,warn} from '../observability/logger.js';
 
 const MAX_BODY_BYTES=105*1024*1024;
 const MAX_TOTAL_BYTES=100*1024*1024;
@@ -86,19 +87,21 @@ export function createFreeAuditHttpHandler(config:{allowedOrigin:string;publicUr
    res.writeHead(204,{'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600'});res.end();return true;
   }
   if(submit&&req.method==='POST'){
-   if(!cors(req,res,config.allowedOrigin)){respond(res,403,{error:'origin_not_allowed'});req.resume();return true;}
+   const traceId=requestId(req);
+   if(!cors(req,res,config.allowedOrigin)){warn('free_audit.submission.rejected',{request_id:traceId,reason:'origin_not_allowed'});respond(res,403,{error:'origin_not_allowed'});req.resume();return true;}
    try{
     const ipRate=await limiter.consume({scope:'free-audit-ip',key:ip,limit:3,windowSeconds:86400,failClosed:true});
-    if(!ipRate.allowed){res.setHeader('Retry-After',String(ipRate.retryAfter));respond(res,429,{error:'too_many_requests'});req.resume();return true;}
+    if(!ipRate.allowed){warn('free_audit.submission.rate_limited',{request_id:traceId,scope:'ip',retry_after_seconds:ipRate.retryAfter});res.setHeader('Retry-After',String(ipRate.retryAfter));respond(res,429,{error:'too_many_requests'});req.resume();return true;}
     const {input,files}=await parseForm(req);
     const emailRate=await limiter.consume({scope:'free-audit-email',key:input.email,limit:3,windowSeconds:86400,failClosed:true});
-    if(!emailRate.allowed){res.setHeader('Retry-After',String(emailRate.retryAfter));respond(res,429,{error:'too_many_requests'});return true;}
-    if(!(await verifyTurnstile(input.turnstile_token,ip))){respond(res,403,{error:'security_verification_failed'});return true;}
+    if(!emailRate.allowed){warn('free_audit.submission.rate_limited',{request_id:traceId,scope:'email',retry_after_seconds:emailRate.retryAfter});res.setHeader('Retry-After',String(emailRate.retryAfter));respond(res,429,{error:'too_many_requests'});return true;}
+    if(!(await verifyTurnstile(input.turnstile_token,ip))){warn('free_audit.submission.rejected',{request_id:traceId,reason:'turnstile_failed'});respond(res,403,{error:'security_verification_failed'});return true;}
     const token=randomBytes(32).toString('base64url');
     const registered=await repository.registerRequest({email:input.email,name:input.name,company:input.company,phone:input.phone,loads:input.loads_per_month,tokenHash:tokenHash(token),ipFingerprint:privacyKey(ip)});
+    info('free_audit.request.registered',{request_id:traceId,audit_request_id:registered.request_id,action:registered.action,submitted_files:files.length});
     if(registered.action==='repeat'){
      if(registered.offer_allowed){const offer=repeatOfferEmail(input.name,config.offerUrl);try{await sendSecurityEmail({to:input.email,...offer,idempotencyKey:`free-audit-offer-${registered.request_id}-${registered.offer_number}`});}catch(error){await repository.releaseOffer(registered.request_id,registered.offer_number);throw error;}}
-     respond(res,202,{accepted:true,message:'Check your email for the next step.'});return true;
+     info('free_audit.offer.completed',{request_id:traceId,audit_request_id:registered.request_id,email_sent:registered.offer_allowed});respond(res,202,{accepted:true,message:'Check your email for the next step.'});return true;
     }
     if(registered.action==='in_progress'){respond(res,202,{accepted:true,message:'Your request is already being received.'});return true;}
     if(registered.action==='created'||registered.action==='replace'){
@@ -108,15 +111,17 @@ export function createFreeAuditHttpHandler(config:{allowedOrigin:string;publicUr
       const pdfs=await pdfsFromFiles(files);
       for(const pdf of pdfs){const attachmentId=randomUUID();const path=freeAuditObjectKey(registered.request_id,attachmentId);await putInvoiceObject(path,pdf.bytes);uploaded.push(path);await repository.saveAttachment({request_id:registered.request_id,attachment_id:attachmentId,filename:pdf.name,storage_path:path,document_hash:pdf.hash,size_bytes:pdf.bytes.length});}
       await repository.markUploaded(registered.request_id);
+      info('free_audit.upload.completed',{request_id:traceId,audit_request_id:registered.request_id,pdf_count:pdfs.length,total_bytes:pdfs.reduce((sum,pdf)=>sum+pdf.bytes.length,0)});
      }catch(error){await deleteInvoiceObjects(uploaded).catch(()=>{});if(oldObjectsDeleted)await repository.failUpload(registered.request_id);else await repository.markUploaded(registered.request_id).catch(()=>{});throw error;}
     }
     const verificationUrl=new URL('/free-audit/verify',config.publicUrl);verificationUrl.searchParams.set('token',token);
     const email=verificationEmail(input.name,verificationUrl.href);await sendSecurityEmail({to:input.email,...email,idempotencyKey:`free-audit-verify-${tokenHash(token).slice(0,24)}`});
+    info('free_audit.verification_email.sent',{request_id:traceId,audit_request_id:registered.request_id});
     respond(res,202,{accepted:true,message:'Check your email to confirm and start the audit.'});return true;
    }catch(error){
     if(error instanceof z.ZodError){respond(res,400,{error:'invalid_request'});return true;}
     if(error instanceof HttpError){respond(res,error.status,{error:error.code});return true;}
-    console.error('[free-audit] Submission failed',error instanceof Error?error.message:'unknown');respond(res,503,{error:'temporarily_unavailable'});return true;
+    failure('free_audit.submission.failed',error,{request_id:traceId});respond(res,503,{error:'temporarily_unavailable'});return true;
    }
   }
   if(verify&&req.method==='GET'){
@@ -125,9 +130,9 @@ export function createFreeAuditHttpHandler(config:{allowedOrigin:string;publicUr
     if(!rate.allowed){respond(res,429,{error:'too_many_requests'});return true;}
     const token=url.searchParams.get('token')??'';
     const valid=/^[A-Za-z0-9_-]{43}$/.test(token)?await repository.verifyRequest(tokenHash(token)):null;
-    const success=Boolean(valid);res.writeHead(success?200:400,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    const success=Boolean(valid);info('free_audit.verification.completed',{request_id:requestId(req),audit_request_id:valid,success});res.writeHead(success?200:400,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
     res.end(`<!doctype html><html><body style="font-family:Arial,sans-serif;max-width:620px;margin:80px auto;padding:24px;color:#171717"><p style="color:#ef5427;font-weight:bold">OLYMPIAN</p><h1>${success?'Email confirmed. Your audit has started.':'This confirmation link is invalid or has expired.'}</h1><p>${success?'We will email the report when it is ready.':'Return to the free audit page to request a new confirmation link.'}</p><p><a href="${config.offerUrl.replaceAll('&','&amp;').replaceAll('"','&quot;')}">View Olympian plans</a></p></body></html>`);return true;
-   }catch{respond(res,503,{error:'temporarily_unavailable'});return true;}
+   }catch(error){failure('free_audit.verification.failed',error,{request_id:requestId(req)});respond(res,503,{error:'temporarily_unavailable'});return true;}
   }
   respond(res,405,{error:'method_not_allowed'});return true;
  };
