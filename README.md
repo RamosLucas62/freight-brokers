@@ -12,6 +12,8 @@ O funil público de auditoria gratuita usa `POST /webhooks/free-audit`, exige co
 
 Os serviços emitem logs JSON correlacionados e sem conteúdo documental ou credenciais. Consulte [logs de produção](docs/production-logs.md).
 
+O processamento independente de comprovantes de entrega aceita PDF, JPEG, PNG, WebP, CSV e Excel, preserva evidência e confiança por campo e impede que uma leitura incerta seja classificada como divergência. Consulte [processamento de POD](docs/pod-processing.md).
+
 ## Preparação
 
 Use Node.js 22 ou posterior. Na pasta do projeto, rode `npm install` e copie `.env.example` para `.env`. Preencha localmente as credenciais; não as envie por chat nem as coloque no Git.
