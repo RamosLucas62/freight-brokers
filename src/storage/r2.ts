@@ -1,4 +1,4 @@
-import {DeleteObjectsCommand,PutObjectCommand,S3Client} from '@aws-sdk/client-s3';
+import {DeleteObjectsCommand,GetObjectCommand,PutObjectCommand,S3Client} from '@aws-sdk/client-s3';
 
 export interface R2Config {
  accountId:string;
@@ -35,6 +35,10 @@ export function invoiceObjectKey(tenantId:string,jobId:string,attachmentId:strin
  return `invoices/${safeSegment(tenantId)}/${safeSegment(jobId)}/${safeSegment(attachmentId)}.pdf`;
 }
 
+export function freeAuditObjectKey(requestId:string,attachmentId:string) {
+ return `free-audits/${safeSegment(requestId)}/${safeSegment(attachmentId)}.pdf`;
+}
+
 export async function putInvoiceObject(key:string,bytes:Buffer) {
  const config=configFromEnvironment();
  await getClient(config).send(new PutObjectCommand({
@@ -42,11 +46,21 @@ export async function putInvoiceObject(key:string,bytes:Buffer) {
  }));
 }
 
+export async function getPrivateObject(key:string,maxBytes=20*1024*1024):Promise<Buffer> {
+ const config=configFromEnvironment();
+ const result=await getClient(config).send(new GetObjectCommand({Bucket:config.bucket,Key:key}));
+ if(!result.Body || Number(result.ContentLength??0)>maxBytes)throw new Error('STORED_ATTACHMENT_TOO_LARGE');
+ const bytes=Buffer.from(await result.Body.transformToByteArray());
+ if(bytes.length>maxBytes)throw new Error('STORED_ATTACHMENT_TOO_LARGE');
+ return bytes;
+}
+
 export async function deleteInvoiceObjects(keys:string[]) {
  if(!keys.length)return;
  const config=configFromEnvironment();
  for(let offset=0;offset<keys.length;offset+=1000){
-  await getClient(config).send(new DeleteObjectsCommand({Bucket:config.bucket,Delete:{Objects:keys.slice(offset,offset+1000).map(Key=>({Key})),Quiet:true}}));
+  const result=await getClient(config).send(new DeleteObjectsCommand({Bucket:config.bucket,Delete:{Objects:keys.slice(offset,offset+1000).map(Key=>({Key})),Quiet:true}}));
+  if(result.Errors?.length)throw new Error('OBJECT_DELETION_INCOMPLETE');
  }
 }
 

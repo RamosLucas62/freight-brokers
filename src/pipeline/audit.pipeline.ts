@@ -18,6 +18,8 @@ export interface PipelineOptions {
   extractor: IExtractionProvider;
   getCarrier: GetCarrierFn;
   store?: AuditStore;
+  minimumInvoiceDate?: string;
+  maximumInvoiceDate?: string;
 }
 
 export async function runAuditPipeline(options: PipelineOptions): Promise<AuditReport> {
@@ -38,6 +40,11 @@ export async function runAuditPipeline(options: PipelineOptions): Promise<AuditR
     // Detect modification during extraction before attaching a content identity.
     if (createHash('sha256').update(await readFile(file)).digest('hex') !== hash) throw new Error(`File changed during extraction: ${file}`);
     const fields = normalizeFields(result.fields);
+    const documentDate = fields.data_fatura ?? fields.data_carga;
+    if (documentDate && ((options.minimumInvoiceDate && documentDate < options.minimumInvoiceDate) || (options.maximumInvoiceDate && documentDate > options.maximumInvoiceDate))) {
+      skipped.push(options.sourceLabels?.[file] ?? file);
+      continue;
+    }
     const confidence = { ...result.confidence_scores };
     for (const key of ['data_carga', 'data_fatura'] as const) {
       if (result.fields[key] && !fields[key]) confidence[key] = 0;

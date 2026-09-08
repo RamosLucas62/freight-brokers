@@ -12,6 +12,7 @@ export interface HttpDependencies {
  enqueue:(eventId:string,event:ReceivedEvent)=>Promise<void>;
  ready:()=>Promise<boolean>;
  limiter?:RateLimiter;
+ freeAudit?:(req:import('node:http').IncomingMessage,res:import('node:http').ServerResponse,limiter:RateLimiter)=>Promise<boolean>;
 }
 export function createApp(deps:HttpDependencies) {
  const webhook=new Webhook(deps.secret);
@@ -23,6 +24,7 @@ export function createApp(deps:HttpDependencies) {
    if(!metricsAuthorized(typeof req.headers.authorization==='string'?req.headers.authorization:undefined)){res.writeHead(404);res.end();return;}
    res.writeHead(200,{'Content-Type':'text/plain; version=0.0.4','Cache-Control':'no-store'});res.end(renderMetrics());return;
   }
+  if(deps.freeAudit&&await deps.freeAudit(req,res,limiter))return;
   if(await dashboard(req,res,limiter))return;
   const respond=(code:number,body:unknown)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
   const ip=clientIp(req.headers,req.socket.remoteAddress);
@@ -56,6 +58,6 @@ export function createApp(deps:HttpDependencies) {
    respond(200,{status:'accepted'});
   }catch(error){if(!res.headersSent)respond(error instanceof HttpError?error.status:503,{error:error instanceof HttpError?'payload_too_large':'temporarily_unavailable'});}
  });
- server.requestTimeout=15000;server.headersTimeout=10000;server.keepAliveTimeout=5000;server.maxHeadersCount=100;server.maxRequestsPerSocket=1000;
+ server.requestTimeout=120000;server.headersTimeout=10000;server.keepAliveTimeout=5000;server.maxHeadersCount=100;server.maxRequestsPerSocket=1000;
  return server;
 }
