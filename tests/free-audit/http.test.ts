@@ -5,17 +5,19 @@ const mocks=vi.hoisted(()=>({
  registerRequest:vi.fn(),saveAttachment:vi.fn(),markUploaded:vi.fn(),failUpload:vi.fn(),verifyRequest:vi.fn(),releaseOffer:vi.fn(),
  inspectRetry:vi.fn(),beginRetry:vi.fn(),finishRetry:vi.fn(),failRetry:vi.fn(),clearAttachments:vi.fn(),loadAttachments:vi.fn(),
  putInvoiceObject:vi.fn(),deleteInvoiceObjects:vi.fn(),sendSecurityEmail:vi.fn(),verifyTurnstile:vi.fn(),
+ createCheckoutSession:vi.fn(),
 }));
 vi.mock('../../src/free-audit/repository.js',()=>({...mocks,claimRequest:vi.fn(),saveResult:vi.fn(),finishRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn(),issueRetry:vi.fn()}));
 vi.mock('../../src/security/turnstile.js',()=>({verifyTurnstile:mocks.verifyTurnstile}));
 vi.mock('../../src/storage/r2.js',()=>({freeAuditObjectKey:(r:string,a:string)=>`free-audits/${r}/${a}.pdf`,putInvoiceObject:mocks.putInvoiceObject,deleteInvoiceObjects:mocks.deleteInvoiceObjects}));
 vi.mock('../../src/notifications/security.sender.js',()=>({sendSecurityEmail:mocks.sendSecurityEmail}));
+vi.mock('../../src/billing/stripe.js',()=>({createCheckoutSession:mocks.createCheckoutSession}));
 import {createFreeAuditHttpHandler} from '../../src/free-audit/http.js';
 
 const limiter={consume:vi.fn(async()=>({allowed:true,limit:3,remaining:2,retryAfter:60})),close:vi.fn(async()=>{})};
 let server:ReturnType<typeof createServer>;let base:string;
 beforeEach(async()=>{
- vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);mocks.loadAttachments.mockResolvedValue([]);
+ vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.createCheckoutSession.mockResolvedValue({url:'https://checkout.stripe.test/session'});mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);mocks.loadAttachments.mockResolvedValue([]);
  const handler=createFreeAuditHttpHandler({allowedOrigins:['https://aiolympian.com','https://www.aiolympian.com'],publicUrl:'https://api.audit.aiolympian.com',offerUrl:'https://aiolympian.com/pricing'});
  server=createServer((req,res)=>void handler(req,res,limiter));await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -23,6 +25,13 @@ afterEach(async()=>{server.closeAllConnections();await new Promise<void>(resolve
 function form(){const value=new FormData();value.set('name','Lucas Ramos');value.set('company','Olympian');value.set('email','Lucas@Example.com');value.set('phone','+1 555 000 0000');value.set('loads_per_month','101-500');value.set('consent','true');value.set('turnstile_token','verified');value.append('files',new Blob([Buffer.from('%PDF-1.4 test')],{type:'application/pdf'}),'invoice.pdf');return value;}
 
 describe('free audit public boundary',()=>{
+ it('creates Stripe checkout from the public pricing origin',async()=>{
+  const response=await fetch(base+'/checkout',{method:'POST',headers:{Origin:'https://aiolympian.com','Content-Type':'application/json'},body:JSON.stringify({email:'Buyer@Example.com',plan:'scale',period:'annual',turnstile_token:'verified'})});
+  expect(response.status).toBe(200);expect(response.headers.get('access-control-allow-origin')).toBe('https://aiolympian.com');expect(await response.json()).toEqual({url:'https://checkout.stripe.test/session'});expect(mocks.createCheckoutSession).toHaveBeenCalledWith('buyer@example.com','scale','annual');
+ });
+ it('rejects checkout requests from untrusted origins',async()=>{
+  const response=await fetch(base+'/checkout',{method:'POST',headers:{Origin:'https://evil.example','Content-Type':'application/json'},body:'{}'});expect(response.status).toBe(403);expect(mocks.createCheckoutSession).not.toHaveBeenCalled();
+ });
  it('stores PDFs and sends verification only for a first request',async()=>{
   mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'created',offer_allowed:false,offer_number:0});
   const response=await fetch(base+'/webhooks/free-audit',{method:'POST',headers:{Origin:'https://aiolympian.com'},body:form()});

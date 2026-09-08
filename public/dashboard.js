@@ -8,11 +8,9 @@ const badge=status=>`<span class="badge ${escape(status)}">${escape(status)}</sp
 const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history',settings:'Settings & billing'};
 const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.',settings:'Choose who receives reports and keep your subscription up to date.'};
 let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null,settingsData=null;
-let checkoutPeriod='annual';
-const checkoutPrices={monthly:{core:'US$497/month',scale:'US$997/month'},semiannual:{core:'US$2,682/6 months',scale:'US$5,382/6 months'},annual:{core:'US$4,970/year',scale:'US$9,970/year'}};
 let turnstileWidgets={};
 async function initializeSecurity(){
- try{const config=await api('security-config');if(!config.turnstile_site_key)return;await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.onload=resolve;script.onerror=reject;document.head.append(script);});turnstileWidgets.login=turnstile.render('#login-turnstile',{sitekey:config.turnstile_site_key});turnstileWidgets.checkout=turnstile.render('#checkout-turnstile',{sitekey:config.turnstile_site_key});}catch{$('login-message').textContent='Security verification could not be loaded. Refresh the page.';}
+ try{const config=await api('security-config');if(!config.turnstile_site_key)return;await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.onload=resolve;script.onerror=reject;document.head.append(script);});turnstileWidgets.login=turnstile.render('#login-turnstile',{sitekey:config.turnstile_site_key});}catch{$('login-message').textContent='Security verification could not be loaded. Refresh the page.';}
 }
 const turnstileToken=name=>globalThis.turnstile&&turnstileWidgets[name]!=null?turnstile.getResponse(turnstileWidgets[name]):undefined;
 async function api(path,options={}){
@@ -26,12 +24,6 @@ $('login-form').addEventListener('submit',async event=>{
  try{await api('login',{method:'POST',body:JSON.stringify({email:$('email').value.trim(),turnstile_token:turnstileToken('login')})});$('login-message').textContent='If this email is registered, you will receive a sign-in link. Please also check your spam folder.';}
  catch(error){$('login-message').textContent=error.message;}finally{if(globalThis.turnstile&&turnstileWidgets.login!=null)turnstile.reset(turnstileWidgets.login);button.disabled=false;}
 });
-$('checkout-form').addEventListener('submit',async event=>{
- event.preventDefault();const button=event.submitter;button.disabled=true;$('checkout-message').textContent='Opening secure checkout…';
- try{const data=await api('checkout',{method:'POST',body:JSON.stringify({email:$('checkout-email').value.trim(),plan:document.querySelector('[name="plan"]:checked').value,period:checkoutPeriod,turnstile_token:turnstileToken('checkout')})});location.assign(data.url);}
- catch(error){$('checkout-message').textContent=error.message;}finally{if(globalThis.turnstile&&turnstileWidgets.checkout!=null)turnstile.reset(turnstileWidgets.checkout);button.disabled=false;}
-});
-document.querySelectorAll('[data-period]').forEach(button=>button.addEventListener('click',()=>{checkoutPeriod=button.dataset.period;document.querySelectorAll('[data-period]').forEach(item=>item.classList.toggle('selected',item===button));document.querySelector('[data-price-core]').textContent=checkoutPrices[checkoutPeriod].core;document.querySelector('[data-price-scale]').textContent=checkoutPrices[checkoutPeriod].scale;}));
 $('onboarding-form').addEventListener('submit',async event=>{
  event.preventDefault();const params=new URLSearchParams(location.search);const button=event.submitter;button.disabled=true;$('onboarding-message').textContent='Creating your account…';
  try{

@@ -37,7 +37,13 @@ FREE_AUDIT_PUBLIC_URL=https://api.audit.aiolympian.com
 FREE_AUDIT_OFFER_URL=https://aiolympian.com/pricing
 ```
 
-`FREE_AUDIT_ORIGIN` remains the required primary browser origin. Set optional `FREE_AUDIT_ORIGINS` to a comma-separated allowlist when the form is served from more than one exact origin. No wildcard origins are accepted. `FREE_AUDIT_PUBLIC_URL` creates email-verification and secure-retry links. `FREE_AUDIT_OFFER_URL` is used for repeat-request offers and confirmation-page navigation. The completed-audit offer links to `PORTAL_URL`, where the prospect can choose a plan and continue to secure Stripe Checkout. Successful submissions intentionally return `202 Accepted`; browser `response.ok` treats that status as success.
+`FREE_AUDIT_ORIGIN` remains the required primary browser origin. Set optional `FREE_AUDIT_ORIGINS` to a comma-separated allowlist when the form is served from more than one exact origin. No wildcard origins are accepted. `FREE_AUDIT_PUBLIC_URL` creates email-verification and secure-retry links. `FREE_AUDIT_OFFER_URL` is used by completed-audit and repeat-request emails as well as confirmation-page navigation. Set it to `https://aiolympian.com/pricing`; the customer portal remains login-only. Successful submissions intentionally return `202 Accepted`; browser `response.ok` treats that status as success.
+
+## Pricing page checkout
+
+After the visitor chooses Core or Scale and monthly, six-month or annual billing, the public pricing page starts Stripe Checkout through `POST https://api.audit.aiolympian.com/checkout`.
+
+Send JSON containing `email`, `plan` (`core` or `scale`), `period` (`monthly`, `semiannual` or `annual`) and `turnstile_token`. The endpoint accepts only configured `FREE_AUDIT_ORIGINS`, validates Turnstile, rate-limits both IP and billing email, and returns `{ "url": "https://checkout.stripe.com/..." }`. Redirect the browser to that returned URL. After payment, Stripe returns the customer to the existing portal onboarding flow.
 
 ## Failed-file recovery
 

@@ -8,8 +8,8 @@ beforeEach(()=>vi.clearAllMocks());
 describe('free audit worker delivery',()=>{
  it('reuses a saved result and sends the report with a stable idempotency key',async()=>{
   mocks.claimRequest.mockResolvedValue(request);const sender={send:vi.fn().mockResolvedValue('email-1')};
-  await expect(processFreeAudit(sender as any,'https://example.com/plans')).resolves.toBe(true);
-  expect(mocks.loadAttachments).not.toHaveBeenCalled();expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({idempotencyKey:`free-audit-result-${request.id}`,to:['lead@example.com'],attachments:expect.arrayContaining([expect.objectContaining({filename:'olympian-free-audit.pdf'})])}));expect(mocks.finishRequest).toHaveBeenCalledWith(request);
+  await expect(processFreeAudit(sender as any,'https://aiolympian.com/pricing')).resolves.toBe(true);
+  expect(mocks.loadAttachments).not.toHaveBeenCalled();expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({idempotencyKey:`free-audit-result-${request.id}`,to:['lead@example.com'],html:expect.stringContaining('https://aiolympian.com/pricing'),attachments:expect.arrayContaining([expect.objectContaining({filename:'olympian-free-audit.pdf'})])}));expect(mocks.finishRequest).toHaveBeenCalledWith(request);
  });
  it('retries only delivery when a persisted report email fails',async()=>{
   mocks.claimRequest.mockResolvedValue(request);const failure=new Error('mail offline');const sender={send:vi.fn().mockRejectedValue(failure)};
