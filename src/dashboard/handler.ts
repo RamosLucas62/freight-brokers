@@ -5,7 +5,7 @@ import {createClient} from '@supabase/supabase-js';
 import {z} from 'zod';
 import {adminAction} from './admin.js';
 import {getSupabaseClient,timedFetch} from '../config/supabase.js';
-import {applyRetentionDiscount,cancelSubscriptionAtPeriodEnd,createBillingPortalSession,createCheckoutSession,pauseSubscriptionOneMonth,retrieveCheckoutSession} from '../billing/stripe.js';
+import {applyRetentionDiscount,cancelSubscriptionAtPeriodEnd,createBillingPortalSession,pauseSubscriptionOneMonth,retrieveCheckoutSession} from '../billing/stripe.js';
 import type {RateLimiter,RateLimitRule} from '../security/rate-limit.js';
 import {clientIp,privacyKey} from '../security/rate-limit.js';
 import {verifyTurnstile} from '../security/turnstile.js';
@@ -86,15 +86,6 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  // Do not reveal whether a customer email is registered.
  if(error&&error.status&&error.status>=500){send(503,{error:'Unable to request a sign-in link. Please try again.'});return true;}
  send(200,{ok:true});return true;
- }
- if(url.pathname==='/api/portal/checkout'&&req.method==='POST'){
- const input=z.object({email:z.string().email().max(254),plan:z.enum(['core','scale']),period:z.enum(['monthly','semiannual','annual']),turnstile_token:z.string().max(4096).optional()}).parse(await body(req));
- if(!(await take({scope:'checkout-ip',limit:5,windowSeconds:3600,failClosed:true})))return true;
- if(!(await take({scope:'checkout-email',key:privacyKey(input.email),limit:3,windowSeconds:86400,failClosed:true})))return true;
- if(!(await verifyTurnstile(input.turnstile_token,ip))){send(403,{error:'Security verification failed. Please refresh and try again.'});return true;}
- try{const session=await createCheckoutSession(input.email.toLowerCase(),input.plan,input.period);send(200,{url:session.url});}
- catch{send(503,{error:'Checkout is still being configured. Contact your account administrator.'});}
- return true;
  }
  if(url.pathname==='/api/portal/onboarding'&&req.method==='POST'){
  if(!(await take({scope:'onboarding-ip',limit:5,windowSeconds:3600,failClosed:true})))return true;

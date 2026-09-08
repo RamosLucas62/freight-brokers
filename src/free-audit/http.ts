@@ -11,6 +11,7 @@ import {sendSecurityEmail} from '../notifications/security.sender.js';
 import * as repository from './repository.js';
 import {repeatOfferEmail,verificationEmail} from './artifacts.js';
 import {failure,info,requestId,warn} from '../observability/logger.js';
+import {createCheckoutSession} from '../billing/stripe.js';
 
 const MAX_BODY_BYTES=105*1024*1024;
 const MAX_TOTAL_BYTES=100*1024*1024;
@@ -19,6 +20,10 @@ const MAX_FILES=50;
 const Input=z.object({
  name:z.string().trim().min(2).max(120),company:z.string().trim().min(2).max(200),email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),
  phone:z.string().trim().max(40).optional(),loads_per_month:z.string().trim().max(40).optional(),turnstile_token:z.string().max(4096).optional(),consent:z.literal(true),
+});
+const CheckoutInput=z.object({
+ email:z.string().trim().email().max(254).transform(value=>value.toLowerCase()),
+ plan:z.enum(['core','scale']),period:z.enum(['monthly','semiannual','annual']),turnstile_token:z.string().max(4096).optional(),
 });
 
 interface PdfUpload {name:string;bytes:Buffer;hash:string;}
@@ -112,12 +117,33 @@ function cors(req:IncomingMessage,res:ServerResponse,allowedOrigins:string[]):bo
 
 export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publicUrl:string;offerUrl:string}){
  return async(req:IncomingMessage,res:ServerResponse,limiter:RateLimiter):Promise<boolean>=>{
-  const url=new URL(req.url??'/',config.publicUrl);const submit=url.pathname==='/webhooks/free-audit';const verify=url.pathname==='/free-audit/verify';const retry=url.pathname==='/free-audit/retry';
-  if(!submit&&!verify&&!retry)return false;
+  const url=new URL(req.url??'/',config.publicUrl);const submit=url.pathname==='/webhooks/free-audit';const checkout=url.pathname==='/checkout';const verify=url.pathname==='/free-audit/verify';const retry=url.pathname==='/free-audit/retry';
+  if(!submit&&!checkout&&!verify&&!retry)return false;
   const ip=clientIp(req.headers,req.socket.remoteAddress);
-  if(submit&&req.method==='OPTIONS'){
+  if((submit||checkout)&&req.method==='OPTIONS'){
    if(!cors(req,res,config.allowedOrigins)){respond(res,403,{error:'origin_not_allowed'});return true;}
    res.writeHead(204,{'Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600'});res.end();return true;
+  }
+  if(checkout&&req.method==='POST'){
+   const traceId=requestId(req);
+   if(!cors(req,res,config.allowedOrigins)){warn('checkout.public.rejected',{request_id:traceId,reason:'origin_not_allowed'});respond(res,403,{error:'origin_not_allowed'});req.resume();return true;}
+   try{
+    const rate=await limiter.consume({scope:'checkout-public-ip',key:ip,limit:5,windowSeconds:3600,failClosed:true});
+    if(!rate.allowed){res.setHeader('Retry-After',String(rate.retryAfter));respond(res,429,{error:'too_many_requests'});req.resume();return true;}
+    const contentType=req.headers['content-type']?.split(';',1)[0].trim().toLowerCase();
+    if(contentType!=='application/json')throw new HttpError(415,'json_required');
+    const input=CheckoutInput.parse(JSON.parse((await readBody(req,16*1024)).toString('utf8')));
+    if(!(await verifyTurnstile(input.turnstile_token,ip))){respond(res,403,{error:'security_verification_failed'});return true;}
+    const emailRate=await limiter.consume({scope:'checkout-public-email',key:privacyKey(input.email),limit:3,windowSeconds:86400,failClosed:true});
+    if(!emailRate.allowed){res.setHeader('Retry-After',String(emailRate.retryAfter));respond(res,429,{error:'too_many_requests'});return true;}
+    const session=await createCheckoutSession(input.email,input.plan,input.period);
+    if(!session.url)throw new Error('STRIPE_CHECKOUT_URL_MISSING');
+    info('checkout.public.created',{request_id:traceId,plan:input.plan,period:input.period});respond(res,200,{url:session.url});return true;
+   }catch(error){
+    if(error instanceof z.ZodError||error instanceof SyntaxError){respond(res,400,{error:'invalid_request'});return true;}
+    if(error instanceof HttpError){respond(res,error.status,{error:error.code});return true;}
+    failure('checkout.public.failed',error,{request_id:traceId});respond(res,503,{error:'temporarily_unavailable'});return true;
+   }
   }
   if(submit&&req.method==='POST'){
    const traceId=requestId(req);

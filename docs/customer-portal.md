@@ -12,7 +12,7 @@ O servidor existente serve o painel em `/`, sem serviço de frontend separado. O
 
 ## Assinatura e onboarding
 
-O portal pode iniciar uma assinatura via Stripe Checkout. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` e os seis IDs `STRIPE_PRICE_CORE_*` / `STRIPE_PRICE_SCALE_*` descritos em [pricing-and-usage.md](pricing-and-usage.md). O botão de novo cliente envia o usuário ao Checkout; após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`. O backend consulta a sessão no Stripe antes de criar qualquer empresa ativa.
+A contratação começa no e-mail da auditoria gratuita, cujo botão abre `https://aiolympian.com/pricing`. Nessa página pública, o cliente escolhe plano e período e inicia o Stripe Checkout pelo endpoint público documentado em [free-audit-webhook.md](free-audit-webhook.md). O portal é exclusivo para login e onboarding; não exibe planos. Após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`, e o backend consulta a sessão antes de criar qualquer empresa ativa.
 
 Configure também `STRIPE_RETENTION_COUPON_ID` com um cupom Stripe de **15% e duração `once`** e `STRIPE_PORTAL_CONFIGURATION_ID` com uma configuração dedicada do Customer Portal. Nessa configuração, habilite troca de forma de pagamento e histórico de faturas, mas deixe o cancelamento de assinatura desabilitado: o cancelamento deve passar pelo fluxo de retenção do próprio portal.
 
