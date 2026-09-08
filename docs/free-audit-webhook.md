@@ -17,7 +17,7 @@ form.addEventListener('submit', async (event) => {
     body: data,
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Unable to submit the audit');
+  if (!response.ok) throw new Error(result.message || result.error || 'Unable to submit the audit');
   // Always show the generic success message. It does not reveal whether the
   // address has already used its free audit.
   document.querySelector('#free-audit-message').textContent = result.message;
@@ -49,6 +49,8 @@ FREE_AUDIT_OFFER_URL=https://aiolympian.com/pricing
 - Uploads stay inert in private R2 storage; every PDF is checked by the private malware scanner before it is opened or processed.
 - Only invoices dated in the last 30 days are counted. An invoice with no readable invoice/load date remains in the report for manual review instead of being silently discarded.
 - The report is sent with PDF and CSV attachments and a paid-plan call to action.
+- If confirmed documents cannot be processed, the customer receives a safe, actionable failure email. Invalid, encrypted, unsafe and oversized documents get tailored guidance without exposing internal infrastructure details.
+- A processing failure does not consume the free entitlement: the same address may replace the files, confirm again and complete its one successful free audit.
 - Stored documents, the generated result, and lead profile are deleted after 30 days. Only a one-way email hash and usage counters remain so the free entitlement cannot reset.
 
 The endpoint returns a generic `202` response for both first and repeat requests. This prevents the page from being used to discover whether an email address is already in the system.

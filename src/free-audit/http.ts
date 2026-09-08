@@ -24,6 +24,11 @@ const Input=z.object({
 interface PdfUpload {name:string;bytes:Buffer;hash:string;}
 
 function respond(res:ServerResponse,status:number,body:unknown){res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));}
+function submissionMessage(code:string){
+ if(['payload_too_large','files_too_large','pdf_too_large'].includes(code))return 'The upload is too large. Each PDF must be 20 MB or smaller, with no more than 100 MB total.';
+ if(['pdfs_only','pdfs_required','files_required','invalid_or_unsafe_zip','too_many_files','invalid_multipart','multipart_required','invalid_request'].includes(code))return 'Attach up to 50 valid, unencrypted PDF files, or a ZIP containing only those PDFs.';
+ return 'We could not receive the audit right now. Please try again in a moment.';
+}
 function cleanFilename(value:string){const name=value.split(/[\\/]/).at(-1)?.replace(/[\u0000-\u001f\u007f]/g,'').trim()||'invoice.pdf';return name.slice(0,240);}
 function tokenHash(value:string){return createHash('sha256').update(value).digest('hex');}
 function isPdf(bytes:Buffer){return bytes.subarray(0,1024).includes(Buffer.from('%PDF-'));}
@@ -119,8 +124,8 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     info('free_audit.verification_email.sent',{request_id:traceId,audit_request_id:registered.request_id});
     respond(res,202,{accepted:true,message:'Check your email to confirm and start the audit.'});return true;
    }catch(error){
-    if(error instanceof z.ZodError){respond(res,400,{error:'invalid_request'});return true;}
-    if(error instanceof HttpError){respond(res,error.status,{error:error.code});return true;}
+    if(error instanceof z.ZodError){respond(res,400,{error:'invalid_request',message:submissionMessage('invalid_request')});return true;}
+    if(error instanceof HttpError){respond(res,error.status,{error:error.code,message:submissionMessage(error.code)});return true;}
     failure('free_audit.submission.failed',error,{request_id:traceId});respond(res,503,{error:'temporarily_unavailable'});return true;
    }
   }

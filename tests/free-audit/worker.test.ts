@@ -15,4 +15,14 @@ describe('free audit worker delivery',()=>{
   mocks.claimRequest.mockResolvedValue(request);const failure=new Error('mail offline');const sender={send:vi.fn().mockRejectedValue(failure)};
   await expect(processFreeAudit(sender as any,'https://example.com/plans')).rejects.toThrow('mail offline');expect(mocks.finishRequest).toHaveBeenCalledWith(request,failure,true);
  });
+ it('notifies the customer when processing fails before a report is ready',async()=>{
+  const pending={...request,result:null};mocks.claimRequest.mockResolvedValue(pending);mocks.loadAttachments.mockResolvedValue([]);const sender={send:vi.fn().mockResolvedValue('email-2')};
+  await expect(processFreeAudit(sender as any,'https://example.com/audit')).rejects.toThrow('NO_FREE_AUDIT_ATTACHMENTS');
+  expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({idempotencyKey:`free-audit-failure-${request.id}-1`,to:['lead@example.com'],subject:expect.stringContaining('Action needed'),attachments:[]}));
+  expect(mocks.finishRequest).toHaveBeenCalledWith(pending,expect.any(Error),false);
+ });
+ it('does not replace a report-delivery retry with a failure notice',async()=>{
+  mocks.claimRequest.mockResolvedValue(request);const sender={send:vi.fn().mockRejectedValue(new Error('mail offline'))};
+  await expect(processFreeAudit(sender as any,'https://example.com/audit')).rejects.toThrow('mail offline');expect(sender.send).toHaveBeenCalledTimes(1);
+ });
 });
