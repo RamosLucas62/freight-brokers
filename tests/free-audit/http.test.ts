@@ -15,7 +15,7 @@ const limiter={consume:vi.fn(async()=>({allowed:true,limit:3,remaining:2,retryAf
 let server:ReturnType<typeof createServer>;let base:string;
 beforeEach(async()=>{
  vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);
- const handler=createFreeAuditHttpHandler({allowedOrigin:'https://aiolympian.com',publicUrl:'https://api.audit.aiolympian.com',offerUrl:'https://aiolympian.com/pricing'});
+ const handler=createFreeAuditHttpHandler({allowedOrigins:['https://aiolympian.com','https://www.aiolympian.com'],publicUrl:'https://api.audit.aiolympian.com',offerUrl:'https://aiolympian.com/pricing'});
  server=createServer((req,res)=>void handler(req,res,limiter));await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
 afterEach(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));vi.unstubAllEnvs();});
@@ -25,7 +25,18 @@ describe('free audit public boundary',()=>{
  it('stores PDFs and sends verification only for a first request',async()=>{
   mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'created',offer_allowed:false,offer_number:0});
   const response=await fetch(base+'/webhooks/free-audit',{method:'POST',headers:{Origin:'https://aiolympian.com'},body:form()});
-  expect(response.status).toBe(202);expect(mocks.registerRequest).toHaveBeenCalledWith(expect.objectContaining({email:'lucas@example.com'}));expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.markUploaded).toHaveBeenCalledOnce();expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({to:'lucas@example.com',subject:expect.stringContaining('Confirm')}));
+ expect(response.status).toBe(202);expect(mocks.registerRequest).toHaveBeenCalledWith(expect.objectContaining({email:'lucas@example.com'}));expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.markUploaded).toHaveBeenCalledOnce();expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({to:'lucas@example.com',subject:expect.stringContaining('Confirm')}));
+ });
+ it('allows the configured www origin and returns matching CORS headers',async()=>{
+  mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'created',offer_allowed:false,offer_number:0});
+  const response=await fetch(base+'/webhooks/free-audit',{method:'POST',headers:{Origin:'https://www.aiolympian.com'},body:form()});
+  expect(response.status).toBe(202);expect(response.headers.get('access-control-allow-origin')).toBe('https://www.aiolympian.com');
+ });
+ it('answers preflight for each configured origin',async()=>{
+  for(const origin of ['https://aiolympian.com','https://www.aiolympian.com']){
+   const response=await fetch(base+'/webhooks/free-audit',{method:'OPTIONS',headers:{Origin:origin,'Access-Control-Request-Method':'POST'}});
+   expect(response.status).toBe(204);expect(response.headers.get('access-control-allow-origin')).toBe(origin);expect(response.headers.get('access-control-allow-methods')).toContain('POST');
+  }
  });
  it('does not store repeat uploads and sends the paid-plan offer',async()=>{
   mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'repeat',offer_allowed:true,offer_number:1});
