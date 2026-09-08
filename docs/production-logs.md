@@ -1,6 +1,6 @@
 # Production logs
 
-The server writes one JSON object per line to stdout/stderr. EasyPanel captures these streams. Search by `request_id`, `audit_request_id`, `job_id`, `tenant_id`, `event_id`, or `delivery_id` to follow one operation across its lifecycle.
+The server writes one JSON object per line to stdout/stderr. EasyPanel captures these streams, and the production deployment can forward them to Better Stack through the configuration in [better-stack.md](better-stack.md). Search by `request_id`, `audit_request_id`, `job_id`, `tenant_id`, `event_id`, or `delivery_id` to follow one operation across its lifecycle.
 
 Important failure events:
 
