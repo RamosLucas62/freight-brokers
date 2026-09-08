@@ -23,7 +23,7 @@ const Input=z.object({
 });
 const CheckoutInput=z.object({
  email:z.string().trim().email().max(254).transform(value=>value.toLowerCase()),
- plan:z.enum(['core','scale']),period:z.enum(['monthly','semiannual','annual']),turnstile_token:z.string().max(4096).optional(),
+ plan:z.enum(['core','growth','scale']),period:z.enum(['monthly','semiannual','annual']),turnstile_token:z.string().max(4096).optional(),
 });
 
 interface PdfUpload {name:string;bytes:Buffer;hash:string;}

@@ -43,7 +43,7 @@ FREE_AUDIT_OFFER_URL=https://aiolympian.com/pricing
 
 After the visitor chooses Core or Scale and monthly, six-month or annual billing, the public pricing page starts Stripe Checkout through `POST https://api.audit.aiolympian.com/checkout`.
 
-Send JSON containing `email`, `plan` (`core` or `scale`), `period` (`monthly`, `semiannual` or `annual`) and `turnstile_token`. The endpoint accepts only configured `FREE_AUDIT_ORIGINS`, validates Turnstile, rate-limits both IP and billing email, and returns `{ "url": "https://checkout.stripe.com/..." }`. Redirect the browser to that returned URL. After payment, Stripe returns the customer to the existing portal onboarding flow.
+Send JSON containing `email`, `plan` (`core`, `growth` or `scale`), `period` (`monthly`, `semiannual` or `annual`) and `turnstile_token`. The endpoint accepts only configured `FREE_AUDIT_ORIGINS`, validates Turnstile, rate-limits both IP and billing email, and returns `{ "url": "https://checkout.stripe.com/..." }`. Redirect the browser to that returned URL. After payment, Stripe returns the customer to the existing portal onboarding flow.
 
 ## Failed-file recovery
 

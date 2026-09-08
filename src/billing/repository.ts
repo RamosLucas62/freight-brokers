@@ -31,7 +31,7 @@ export async function processStripeEvent(event:StripeEvent){
   const object=event.data.object;const metadata=typeof object.metadata==='object'&&object.metadata?object.metadata as Record<string,unknown>:{};
   const items=typeof object.items==='object'&&object.items?object.items as {data?:Array<{price?:{id?:unknown}}>}:{},selection=selectionFromPriceId(items.data?.[0]?.price?.id);
   const plan=selection?.plan??metadata.plan_code,period=selection?.period??metadata.billing_period;
-  if((plan==='core'||plan==='scale')&&(period==='monthly'||period==='semiannual'||period==='annual')){
+  if((plan==='core'||plan==='growth'||plan==='scale')&&(period==='monthly'||period==='semiannual'||period==='annual')){
    const synced=await getSupabaseClient().rpc('sync_billing_plan_from_stripe',{p_subscription_id:String(object.id??''),p_plan:plan,p_period:period});if(synced.error)throw synced.error;
   }
  }

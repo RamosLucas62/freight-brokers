@@ -6,7 +6,7 @@ Plataforma em TypeScript para receber faturas por e-mail, identificar inconsist�
 
 O cliente receberá um endereço exclusivo em `audit.aiolympian.com` e encaminhará ou copiará suas faturas para ele. A auditoria será automática, com relatório salvo no sistema e entregue por e-mail. O pagamento será via Stripe, com conta ativa, inativa ou pausada. O painel será complementar; upload manual não é o fluxo principal.
 
-O recebimento pelo Resend, armazenamento privado no R2, relatórios diários/mensais, assinatura Stripe, planos Core/Scale e portal estão implementados. Consulte [preços e cobrança por uso](docs/pricing-and-usage.md). A implantação de produção exige as migrações, Redis, Turnstile e o scanner privado de PDFs descritos no [guia de segurança](docs/security-production.md).
+O recebimento pelo Resend, armazenamento privado no R2, relatórios diários/mensais, assinatura Stripe, planos Core/Growth/Scale e portal estão implementados. Consulte [preços e cobrança por uso](docs/pricing-and-usage.md). A implantação de produção exige as migrações, Redis, Turnstile e o scanner privado de PDFs descritos no [guia de segurança](docs/security-production.md).
 
 Os logs estruturados de produção podem ser enviados ao Better Stack usando o [guia para Easypanel](docs/better-stack.md), sem adicionar credenciais ao código da aplicação.
 
