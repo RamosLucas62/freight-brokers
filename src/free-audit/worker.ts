@@ -12,6 +12,9 @@ import {ResendSender} from '../notifications/resend.sender.js';
 import {failureEmail,followupEmail,resultEmail,type FreeAuditFailureKind} from './artifacts.js';
 import * as repository from './repository.js';
 import {failure,info} from '../observability/logger.js';
+import {recommendedPlan} from './recommendation.js';
+
+export {recommendedPlan} from './recommendation.js';
 
 const transientStore:AuditStore={async assertActive(){},async history(){return [];},async commit(){}};
 function minimumDate(now=new Date()){const date=new Date(now);date.setUTCDate(date.getUTCDate()-30);return date.toISOString().slice(0,10);}
@@ -21,10 +24,6 @@ function failureKind(error:unknown):FreeAuditFailureKind{
  if(/(INVALID_OR_ENCRYPTED|INVALID_PDF|FORMAT|NO_FREE_AUDIT_ATTACHMENTS)/.test(code))return 'invalid_document';
  if(/(MALWARE|ACTIVE_CONTENT)/.test(code))return 'unsafe_document';
  return 'temporary_error';
-}
-export function recommendedPlan(loads:string|null|undefined):'core'|'growth'|'scale'{
- const values=String(loads??'').match(/\d[\d,]*/g)?.map(value=>Number(value.replaceAll(',',''))).filter(Number.isFinite)??[];
- const volume=values.length?Math.max(...values):0;return volume>1500?'scale':volume>500?'growth':'core';
 }
 export function resultAccessToken(requestId:string,secret:string){return createHmac('sha256',secret).update(`free-audit-result:${requestId}`).digest('base64url');}
 

@@ -6,7 +6,7 @@ const report={run_id:'11111111-1111-4111-8111-111111111111',generated_at:new Dat
 const request={id:'11111111-1111-4111-8111-111111111111',email:'lead@example.com',contact_name:'Lead',company_name:'Acme',phone:null,loads_per_month:null,status:'processing',attempts:1,result:report};
 beforeEach(()=>{vi.clearAllMocks();mocks.activateResult.mockResolvedValue(undefined);});
 describe('free audit worker delivery',()=>{
- it('maps reported volume to the three plans and creates a stable private token',()=>{expect(recommendedPlan('101-500')).toBe('core');expect(recommendedPlan('501 - 1,500')).toBe('growth');expect(recommendedPlan('2,000+')).toBe('scale');expect(resultAccessToken(request.id,'secret')).toHaveLength(43);expect(resultAccessToken(request.id,'secret')).toBe(resultAccessToken(request.id,'secret'));});
+ it('maps reported volume to the three plans and creates a stable private token',()=>{expect(recommendedPlan('101-500')).toBe('core');expect(recommendedPlan('501 - 1,500')).toBe('growth');expect(recommendedPlan('Over 1,500/month')).toBe('scale');expect(recommendedPlan('2,000+')).toBe('scale');expect(resultAccessToken(request.id,'secret')).toHaveLength(43);expect(resultAccessToken(request.id,'secret')).toBe(resultAccessToken(request.id,'secret'));});
  it('reuses a saved result and sends the report with a stable idempotency key',async()=>{
   mocks.claimRequest.mockResolvedValue(request);const sender={send:vi.fn().mockResolvedValue('email-1')};
   await expect(processFreeAudit(sender as any,'https://aiolympian.com/pricing')).resolves.toBe(true);
