@@ -15,16 +15,16 @@ beforeEach(()=>{
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();vi.clearAllMocks();});
 
 describe('Stripe subscription actions',()=>{
- it('selects one of the nine server-side prices and stores plan metadata',async()=>{
-  await createCheckoutSession('buyer@example.com','growth','semiannual');const [,request]=fetchMock.mock.calls[0];const body=request.body as URLSearchParams;
-  expect(body.get('line_items[0][price]')).toBe('price_growth_6');expect(body.get('metadata[plan_code]')).toBe('growth');expect(body.get('subscription_data[metadata][billing_period]')).toBe('semiannual');
+ it('selects the matching Stripe Payment Link and pre-fills the customer email',async()=>{
+  const session=await createCheckoutSession('buyer@example.com','growth','semiannual');const url=new URL(session.url!);
+  expect(url.origin+url.pathname).toBe('https://buy.stripe.com/test_bJe7sDfL459t1p95gNcQU06');
+  expect(url.searchParams.get('prefilled_email')).toBe('buyer@example.com');
+  expect(fetchMock).not.toHaveBeenCalled();
  });
- it('uses different idempotency keys when the checkout return URL changes',async()=>{
-  await createCheckoutSession('buyer@example.com','scale','semiannual','https://portal.example.com/private-result');
-  await createCheckoutSession('buyer@example.com','scale','semiannual','https://portal.example.com/');
-  const privateKey=fetchMock.mock.calls[0][1].headers['Idempotency-Key'];
-  const publicKey=fetchMock.mock.calls[1][1].headers['Idempotency-Key'];
-  expect(privateKey).not.toBe(publicKey);
+ it('uses the same Payment Link from public and private checkout surfaces',async()=>{
+  const privateSession=await createCheckoutSession('buyer@example.com','scale','semiannual','https://portal.example.com/private-result');
+  const publicSession=await createCheckoutSession('buyer@example.com','scale','semiannual');
+  expect(new URL(privateSession.url!).pathname).toBe(new URL(publicSession.url!).pathname);
  });
  it('opens the restricted customer portal configuration',async()=>{
   await createBillingPortalSession('cus_123');const [,request]=fetchMock.mock.calls[0];const body=request.body as URLSearchParams;
