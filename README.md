@@ -8,6 +8,8 @@ O cliente receberá um endereço exclusivo em `audit.aiolympian.com` e encaminha
 
 O recebimento pelo Resend, armazenamento privado no R2, relatórios diários/mensais, assinatura Stripe, planos Core/Growth/Scale e portal estão implementados. Consulte [preços e cobrança por uso](docs/pricing-and-usage.md). A implantação de produção exige as migrações, Redis, Turnstile e o scanner privado de PDFs descritos no [guia de segurança](docs/security-production.md).
 
+Faturas, rate confirmations e PODs enviados juntos em PDF são classificados e conciliados por load number com evidência e limites de confiança. Accessorials não autorizados e potenciais receitas não cobradas são sinalizados somente quando os documentos fornecem prova suficiente; incerteza permanece não verificável. Consulte [a conciliação documental](docs/document-reconciliation.md) e [o processamento independente de POD](docs/pod-processing.md).
+
 Os logs estruturados de produção podem ser enviados ao Better Stack usando o [guia para Easypanel](docs/better-stack.md), sem adicionar credenciais ao código da aplicação.
 
 O funil público de auditoria gratuita usa `POST /webhooks/free-audit`, exige confirmação do e-mail e concede uma única auditoria por endereço. Solicitações repetidas recebem a oferta dos planos sem que novos documentos sejam armazenados. Consulte [integração da página e segurança](docs/free-audit-webhook.md).

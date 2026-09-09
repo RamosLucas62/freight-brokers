@@ -1,9 +1,13 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
-vi.mock('../../src/inbound/repository.js',()=>({savedReport:vi.fn(),finish:vi.fn(),saveAttachment:vi.fn(),storedExtractions:vi.fn(),cacheExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
+const documentMocks=vi.hoisted(()=>({classify:vi.fn(),extractPod:vi.fn(),extractRate:vi.fn()}));
+vi.mock('../../src/inbound/repository.js',()=>({savedReport:vi.fn(),finish:vi.fn(),saveAttachment:vi.fn(),storedDocuments:vi.fn(),setDocumentType:vi.fn(),cacheExtraction:vi.fn(),cacheSupportingExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
 vi.mock('../../src/db/audit.repo.js',()=>({createAuditStore:vi.fn()}));
 vi.mock('../../src/pipeline/audit.pipeline.js',()=>({runAuditPipeline:vi.fn()}));
 vi.mock('../../src/extraction/index.js',()=>({extractor:{extract:vi.fn()}}));
 vi.mock('../../src/carrier/index.js',()=>({getCarrier:vi.fn()}));
+vi.mock('../../src/documents/classifier.js',()=>({OpenRouterDocumentClassifier:class{classify=documentMocks.classify;}}));
+vi.mock('../../src/pod/openrouter.extractor.js',()=>({OpenRouterPodExtractor:class{extract=documentMocks.extractPod;}}));
+vi.mock('../../src/rate-confirmation/openrouter.extractor.js',()=>({OpenRouterRateConfirmationExtractor:class{extract=documentMocks.extractRate;}}));
 import * as repo from '../../src/inbound/repository.js';
 import {createAuditStore} from '../../src/db/audit.repo.js';
 import {runAuditPipeline} from '../../src/pipeline/audit.pipeline.js';
@@ -11,8 +15,8 @@ import {processJob} from '../../src/inbound/worker.js';
 const job={id:'11111111-1111-4111-8111-111111111111',tenant_id:'22222222-2222-4222-8222-222222222222',email_id:'33333333-3333-4333-8333-333333333333'};
 let active=vi.fn();let client:any;
 beforeEach(()=>{
- vi.resetAllMocks();active=vi.fn().mockResolvedValue(undefined);vi.mocked(createAuditStore).mockReturnValue({assertActive:active} as any);
- vi.mocked(repo.storedExtractions).mockResolvedValue(new Map());
+ vi.resetAllMocks();documentMocks.classify.mockResolvedValue('invoice');active=vi.fn().mockResolvedValue(undefined);vi.mocked(createAuditStore).mockReturnValue({assertActive:active} as any);
+ vi.mocked(repo.storedDocuments).mockResolvedValue(new Map());
  client={isAutomatic:vi.fn().mockResolvedValue(false),attachments:vi.fn().mockResolvedValue([{id:job.id,filename:'../../evil.pdf',size:10,content_type:'application/pdf'}]),download:vi.fn().mockResolvedValue(Buffer.from('%PDF-test'))};
  vi.mocked(runAuditPipeline).mockResolvedValue({run_id:job.id,tenant_id:job.tenant_id,warnings:[]} as any);
 });
@@ -30,6 +34,15 @@ describe('inbound worker',()=>{
  });
  it('marks failures for review without retrying paid work',async()=>{
   vi.mocked(runAuditPipeline).mockRejectedValue(new Error('timeout'));await processJob(job,client);expect(runAuditPipeline).toHaveBeenCalledOnce();expect(repo.finish).toHaveBeenCalledWith(job,'needs_review',null,'PROCESSING_FAILED');
+ });
+ it('classifies and passes POD and rate confirmation evidence to the audit pipeline',async()=>{
+  const ids=['11111111-1111-4111-8111-111111111111','44444444-4444-4444-8444-444444444444','55555555-5555-4555-8555-555555555555'];
+  client.attachments.mockResolvedValue(ids.map((id,index)=>({id,filename:['invoice.pdf','pod.pdf','rate-confirmation.pdf'][index],size:10,content_type:'application/pdf'})));
+  documentMocks.classify.mockImplementation(async(_path:string,name:string)=>name==='pod.pdf'?'pod':name==='rate-confirmation.pdf'?'rate_confirmation':'invoice');
+  const pod={source_file:'pod.pdf',source_kind:'ocr',fields:{},quality:{},requires_human_review:false,raw:{}};const rate={source_file:'rate.pdf',fields:{},requires_human_review:false,raw:{}};
+  documentMocks.extractPod.mockResolvedValue(pod);documentMocks.extractRate.mockResolvedValue(rate);await processJob(job,client);
+  const options=vi.mocked(runAuditPipeline).mock.calls[0][0];expect(options.filePaths).toHaveLength(1);expect(options.pods).toEqual([pod]);expect(options.rateConfirmations).toEqual([rate]);expect(options.reconcileSupportingDocuments).toBe(true);
+  expect(repo.cacheSupportingExtraction).toHaveBeenCalledTimes(2);expect(repo.recordBillableInvoice).not.toHaveBeenCalled();
  });
  it('records emails without PDFs explicitly',async()=>{
   client.attachments.mockResolvedValue([]);await processJob(job,client);expect(repo.finish).toHaveBeenCalledWith(job,'ignored',null,'NO_PDF_ATTACHMENTS');
