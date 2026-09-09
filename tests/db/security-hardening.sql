@@ -1,5 +1,9 @@
 -- Runs last in the isolated transaction and validates AAL2, pending recipients,
 -- sender authorization, quotas and the durable Stripe queue.
+DO $$ BEGIN
+ IF NOT (SELECT prosecdef FROM pg_proc WHERE oid='public.portal_onboarding_user_id(text)'::regprocedure) THEN RAISE EXCEPTION 'Onboarding identity lookup cannot read Auth identities'; END IF;
+ IF NOT (SELECT prosecdef FROM pg_proc WHERE oid='public.secure_onboarding_owner(uuid,uuid)'::regprocedure) THEN RAISE EXCEPTION 'Onboarding owner assignment cannot verify Auth identities'; END IF;
+END $$;
 UPDATE public.audit_memberships SET role='owner' WHERE tenant_id='10000000-0000-4000-8000-000000000001' AND user_id='20000000-0000-4000-8000-000000000001';
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',true);
