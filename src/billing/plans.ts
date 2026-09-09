@@ -10,7 +10,7 @@ export const plans={
 export const prices={
  core:{monthly:{amount:49700,env:'STRIPE_PRICE_CORE_MONTHLY'},semiannual:{amount:268200,env:'STRIPE_PRICE_CORE_SEMIANNUAL'},annual:{amount:497000,env:'STRIPE_PRICE_CORE_ANNUAL'}},
  growth:{monthly:{amount:99700,env:'STRIPE_PRICE_GROWTH_MONTHLY'},semiannual:{amount:538200,env:'STRIPE_PRICE_GROWTH_SEMIANNUAL'},annual:{amount:997000,env:'STRIPE_PRICE_GROWTH_ANNUAL'}},
- scale:{monthly:{amount:149700,env:'STRIPE_PRICE_SCALE_MONTHLY'},semiannual:{amount:808380,env:'STRIPE_PRICE_SCALE_SEMIANNUAL'},annual:{amount:1497000,env:'STRIPE_PRICE_SCALE_ANNUAL'}},
+ scale:{monthly:{amount:149700,env:'STRIPE_PRICE_SCALE_MONTHLY'},semiannual:{amount:808200,env:'STRIPE_PRICE_SCALE_SEMIANNUAL'},annual:{amount:1497000,env:'STRIPE_PRICE_SCALE_ANNUAL'}},
 } as const;
 
 export function priceId(plan:PlanCode,period:BillingPeriod):string{

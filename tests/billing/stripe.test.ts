@@ -19,6 +19,13 @@ describe('Stripe subscription actions',()=>{
   await createCheckoutSession('buyer@example.com','growth','semiannual');const [,request]=fetchMock.mock.calls[0];const body=request.body as URLSearchParams;
   expect(body.get('line_items[0][price]')).toBe('price_growth_6');expect(body.get('metadata[plan_code]')).toBe('growth');expect(body.get('subscription_data[metadata][billing_period]')).toBe('semiannual');
  });
+ it('uses different idempotency keys when the checkout return URL changes',async()=>{
+  await createCheckoutSession('buyer@example.com','scale','semiannual','https://portal.example.com/private-result');
+  await createCheckoutSession('buyer@example.com','scale','semiannual','https://portal.example.com/');
+  const privateKey=fetchMock.mock.calls[0][1].headers['Idempotency-Key'];
+  const publicKey=fetchMock.mock.calls[1][1].headers['Idempotency-Key'];
+  expect(privateKey).not.toBe(publicKey);
+ });
  it('opens the restricted customer portal configuration',async()=>{
   await createBillingPortalSession('cus_123');const [,request]=fetchMock.mock.calls[0];const body=request.body as URLSearchParams;
   expect(body.get('customer')).toBe('cus_123');expect(body.get('configuration')).toBe('bpc_customer');expect(body.get('return_url')).toBe('https://portal.example.com/');
