@@ -13,6 +13,26 @@ export const prices={
  scale:{monthly:{amount:149700,env:'STRIPE_PRICE_SCALE_MONTHLY'},semiannual:{amount:808200,env:'STRIPE_PRICE_SCALE_SEMIANNUAL'},annual:{amount:1497000,env:'STRIPE_PRICE_SCALE_ANNUAL'}},
 } as const;
 
+export const paymentLinks={
+ core:{
+  monthly:'https://buy.stripe.com/test_6oU14fdCW45p8RBbFbcQU02',
+  semiannual:'https://buy.stripe.com/test_5kQaEPbuO59t6JtbFbcQU03',
+  annual:'https://buy.stripe.com/test_cNicMX2Yi8lFffZbFbcQU04',
+ },
+ growth:{
+  monthly:'https://buy.stripe.com/test_7sYfZ99mGdFZ6JtdNjcQU05',
+  semiannual:'https://buy.stripe.com/test_bJe7sDfL459t1p95gNcQU06',
+  annual:'https://buy.stripe.com/test_4gMfZ956qfO73xheRncQU07',
+ },
+ scale:{
+  monthly:'https://buy.stripe.com/test_6oUaEPbuO1Xh3xh38FcQU00',
+  semiannual:'https://buy.stripe.com/test_fZu3cn6au1Xhd7R10xcQU08',
+  annual:'https://buy.stripe.com/test_bJe3cn9mG0Tdgk34cJcQU09',
+ },
+} as const satisfies Record<PlanCode,Record<BillingPeriod,string>>;
+
+export function paymentLink(plan:PlanCode,period:BillingPeriod){return paymentLinks[plan][period];}
+
 export function priceId(plan:PlanCode,period:BillingPeriod):string{
  const value=process.env[prices[plan][period].env];
  if(!value?.startsWith('price_'))throw new Error('STRIPE_PRICE_NOT_CONFIGURED');

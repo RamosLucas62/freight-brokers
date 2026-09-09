@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import {privacyKey} from '../security/rate-limit.js';
 import {readResponseBody} from '../security/http.js';
-import {priceId,type BillingPeriod,type PlanCode} from './plans.js';
+import {paymentLink,type BillingPeriod,type PlanCode} from './plans.js';
 
 export type StripeCheckoutSession={id:string;url?:string|null;payment_status?:string;status?:string;customer?:string;subscription?:string;customer_details?:{email?:string|null};metadata?:Record<string,string>} ;
 
@@ -16,28 +16,10 @@ async function stripe(path:string,init:RequestInit={}){
  if(!response.ok)throw new Error(typeof data.error?.message==='string'?data.error.message:'STRIPE_REQUEST_FAILED');
  return data;
 }
-export async function createCheckoutSession(email:string,plan:PlanCode,period:BillingPeriod,cancelUrl?:string){
- const price=priceId(plan,period);
- const origin=process.env.PORTAL_URL;
- if(!price||!origin)throw new Error('STRIPE_NOT_CONFIGURED');
- const resolvedCancelUrl=cancelUrl??new URL('/',origin).href;
- const body=new URLSearchParams({
-  mode:'subscription',
-  'line_items[0][price]':price,
-  'line_items[0][quantity]':'1',
-  customer_email:email,
-  success_url:new URL('/onboarding?session_id={CHECKOUT_SESSION_ID}',origin).href,
-  cancel_url:resolvedCancelUrl,
-  allow_promotion_codes:'true',
-  'metadata[plan_code]':plan,
-  'metadata[billing_period]':period,
-  'subscription_data[metadata][plan_code]':plan,
-  'subscription_data[metadata][billing_period]':period,
- });
- // A private audit and the public pricing page use different return URLs. Stripe
- // treats reusing an idempotency key with different parameters as an error.
- const checkoutFingerprint=privacyKey(`${email}:${plan}:${period}:${resolvedCancelUrl}`).slice(0,48);
- return stripe('/checkout/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`checkout-${checkoutFingerprint}`}}) as Promise<StripeCheckoutSession>;
+export async function createCheckoutSession(email:string,plan:PlanCode,period:BillingPeriod,_cancelUrl?:string){
+ const url=new URL(paymentLink(plan,period));
+ url.searchParams.set('prefilled_email',email);
+ return {id:`payment-link-${plan}-${period}`,url:url.href,status:'open'} satisfies StripeCheckoutSession;
 }
 export async function retrieveCheckoutSession(id:string){
  return stripe('/checkout/sessions/'+encodeURIComponent(id)) as Promise<StripeCheckoutSession>;
