@@ -16,7 +16,7 @@ async function stripe(path:string,init:RequestInit={}){
  if(!response.ok)throw new Error(typeof data.error?.message==='string'?data.error.message:'STRIPE_REQUEST_FAILED');
  return data;
 }
-export async function createCheckoutSession(email:string,plan:PlanCode,period:BillingPeriod){
+export async function createCheckoutSession(email:string,plan:PlanCode,period:BillingPeriod,cancelUrl?:string){
  const price=priceId(plan,period);
  const origin=process.env.PORTAL_URL;
  if(!price||!origin)throw new Error('STRIPE_NOT_CONFIGURED');
@@ -26,7 +26,7 @@ export async function createCheckoutSession(email:string,plan:PlanCode,period:Bi
   'line_items[0][quantity]':'1',
   customer_email:email,
   success_url:new URL('/onboarding?session_id={CHECKOUT_SESSION_ID}',origin).href,
-  cancel_url:new URL('/',origin).href,
+  cancel_url:cancelUrl??new URL('/',origin).href,
   allow_promotion_codes:'true',
   'metadata[plan_code]':plan,
   'metadata[billing_period]':period,
