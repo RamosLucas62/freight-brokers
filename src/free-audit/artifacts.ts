@@ -44,13 +44,53 @@ export function freeAuditCsv(report:AuditReport):Buffer{
  return Buffer.from('\uFEFF'+[header,...report.exceptions.map(e=>[e.source_reference.file,e.rule_label,e.descricao,e.valor_envolvido])].map(row=>row.map(csv).join(',')).join('\r\n'),'utf8');
 }
 
-function pdfEscape(value:string){return value.normalize('NFKD').replace(/[^\x20-\x7E]/g,'').replace(/[\\()]/g,'\\$&');}
-function wrap(value:string,width=82){const lines:string[]=[];let line='';for(const word of value.split(/\s+/)){const next=line?`${line} ${word}`:word;if(next.length<=width)line=next;else{if(line)lines.push(line);line=word;}}if(line)lines.push(line);return lines;}
+function pdfEscape(value:unknown){return String(value??'').normalize('NFKD').replace(/[\u2013\u2014]/g,'-').replace(/[\u2018\u2019]/g,"'").replace(/[\u201c\u201d]/g,'"').replace(/[^\x20-\x7E]/g,'').replace(/[\\()]/g,'\\$&');}
+function wrap(value:unknown,width=74){
+ const words=pdfEscape(value).trim().split(/\s+/).flatMap(word=>word.length>width?word.match(new RegExp(`.{1,${width}}`,'g'))??[word]:[word]);
+ const lines:string[]=[];let line='';
+ for(const word of words){const next=line?`${line} ${word}`:word;if(next.length<=width)line=next;else{if(line)lines.push(line);line=word;}}
+ if(line)lines.push(line);return lines;
+}
+const pdfColor={ink:'0.067 0.067 0.059',orange:'0.937 0.329 0.153',cream:'0.969 0.969 0.941',white:'1 1 1',muted:'0.400 0.400 0.373',paleOrange:'0.984 0.894 0.847',green:'0.184 0.435 0.345'} as const;
+function pdfText(text:unknown,x:number,y:number,size:number,font:'F1'|'F2'='F1',color:keyof typeof pdfColor='ink'){
+ return `BT /${font} ${size} Tf ${pdfColor[color]} rg ${x} ${y} Td (${pdfEscape(text)}) Tj ET`;
+}
+function pdfRect(x:number,y:number,width:number,height:number,fill:keyof typeof pdfColor,stroke?:keyof typeof pdfColor){
+ return `q ${pdfColor[fill]} rg${stroke?` ${pdfColor[stroke]} RG 1 w`:''} ${x} ${y} ${width} ${height} re ${stroke?'B':'f'} Q`;
+}
 export function freeAuditPdf(company:string,report:AuditReport):Buffer{
- const lines=[`Company: ${company}`,`Invoices reviewed: ${report.total_invoices_processed}`,`Findings: ${report.total_exceptions}`,`Amount under review: ${money(report.valor_total_under_review)}`,'',...report.exceptions.flatMap((e,index)=>wrap(`${index+1}. ${e.rule_label} | ${e.source_reference.file} | ${money(e.valor_envolvido)} | ${e.descricao}`)),...(report.exceptions.length?[]:['No billing risks were detected in the eligible invoices.']),'','Automated findings require human review. Submitted documents are deleted after 30 days.'];
- const pages:string[][]=[[]];for(const line of lines){if(pages.at(-1)!.length>=42)pages.push([]);pages.at(-1)!.push(line);}
+ const pages:string[][]=[];let page:string[]=[];let y=0;
+ const startPage=(continuation=false)=>{
+  page=[pdfRect(0,0,612,792,'cream'),pdfRect(48,744,12,12,'orange'),pdfText('OLYMPIAN',70,745,12,'F2'),pdfText('FREE INVOICE AUDIT',469,747,8,'F2','muted'),`q ${pdfColor.ink} RG .8 w 48 728 m 564 728 l S Q`];
+  if(continuation){page.push(pdfText('Findings requiring review',48,690,20,'F2'),pdfText(company,48,668,9,'F1','muted'));y=638;}else y=708;
+  pages.push(page);
+ };
+ startPage();
+ page.push(pdfText('AUDIT SNAPSHOT',48,y,9,'F2','orange'),pdfText(company,48,y-34,24,'F2'));
+ page.push(pdfRect(48,y-166,516,104,'ink'));
+ page.push(pdfText('AMOUNT UNDER REVIEW',68,y-91,9,'F2','orange'),pdfText(money(report.valor_total_under_review),68,y-137,31,'F2','white'));
+ page.push(pdfText('Prioritize these items before a final payment decision.',326,y-118,9,'F1','white'));
+ const metrics=[['INVOICES REVIEWED',report.total_invoices_processed],['FINDINGS',report.total_exceptions],['REPORT DATE',new Date(report.generated_at).toLocaleDateString('en-US',{timeZone:'UTC'})]] as const;
+ metrics.forEach(([label,value],index)=>{const x=48+index*176;page.push(pdfRect(x,y-252,164,66,index===1?'paleOrange':'white','ink'),pdfText(label,x+14,y-210,8,'F2',index===1?'orange':'muted'),pdfText(value,x+14,y-235,18,'F2'));});
+ page.push(pdfText('FINDINGS REQUIRING REVIEW',48,y-292,9,'F2','orange'),pdfText('Each item includes its source, amount and reason for review.',48,y-311,9,'F1','muted'));
+ y-=340;
+ if(!report.exceptions.length){
+  page.push(pdfRect(48,y-88,516,88,'white','green'),pdfText('No billing risks detected',68,y-32,16,'F2','green'),pdfText('No exceptions were identified in the eligible invoices reviewed.',68,y-56,10));
+ }else for(const [index,finding] of report.exceptions.entries()){
+  const description=wrap(finding.descricao,76);const cardHeight=Math.max(90,62+description.length*12);
+  if(y-cardHeight<70){startPage(true);}
+  page.push(pdfRect(48,y-cardHeight,516,cardHeight,'white','ink'),pdfRect(48,y-cardHeight,6,cardHeight,'orange'));
+  page.push(pdfText(String(index+1).padStart(2,'0'),68,y-25,9,'F2','orange'),pdfText(finding.rule_label,96,y-26,12,'F2'));
+  const source=`${finding.source_reference.file}${finding.source_reference.page?` - page ${finding.source_reference.page}`:''}`;
+  page.push(pdfText(source,96,y-45,8,'F1','muted'),pdfText(money(finding.valor_envolvido),450,y-26,11,'F2','green'));
+  description.forEach((line,lineIndex)=>page.push(pdfText(line,68,y-67-lineIndex*12,9)));
+  y-=cardHeight+12;
+ }
+ pages.forEach((commands,index)=>{
+  commands.push(`q ${pdfColor.ink} RG .6 w 48 48 m 564 48 l S Q`,pdfText('Automated findings require human review. Documents are deleted after 30 days.',48,29,7,'F1','muted'),pdfText(`Page ${index+1} of ${pages.length}`,519,29,7,'F2','muted'));
+ });
  const pageStart=3,contentStart=pageStart+pages.length,fontRef=contentStart+pages.length,boldFontRef=fontRef+1;
- const objects=['<< /Type /Catalog /Pages 2 0 R >>',`<< /Type /Pages /Kids [${pages.map((_,i)=>`${pageStart+i} 0 R`).join(' ')}] /Count ${pages.length} >>`,...pages.map((_,i)=>`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontRef} 0 R /F2 ${boldFontRef} 0 R >> >> /Contents ${contentStart+i} 0 R >>`),...pages.map((page,pageIndex)=>{const body=page.map((line,i)=>`${i?'T* ':''}(${pdfEscape(line)}) Tj`).join('\n');const stream=`BT /F2 15 Tf 48 760 Td (OLYMPIAN FREE INVOICE AUDIT) Tj /F1 9 Tf 0 -28 Td 14 TL ${body} ET\nBT /F1 9 Tf 48 28 Td (Page ${pageIndex+1} of ${pages.length}) Tj ET`;return `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`; }),'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'];
- let output='%PDF-1.4\n';const offsets=[0];objects.forEach((object,index)=>{offsets.push(Buffer.byteLength(output));output+=`${index+1} 0 obj\n${object}\nendobj\n`;});const xref=Buffer.byteLength(output);output+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n${offsets.slice(1).map(o=>String(o).padStart(10,'0')+' 00000 n ').join('\n')}\ntrailer << /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>',`<< /Type /Pages /Kids [${pages.map((_,index)=>`${pageStart+index} 0 R`).join(' ')}] /Count ${pages.length} >>`,...pages.map((_,index)=>`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontRef} 0 R /F2 ${boldFontRef} 0 R >> >> /Contents ${contentStart+index} 0 R >>`),...pages.map(commands=>{const stream=commands.join('\n');return `<< /Length ${Buffer.byteLength(stream,'ascii')} >>\nstream\n${stream}\nendstream`; }),'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'];
+ let output='%PDF-1.4\n';const offsets=[0];objects.forEach((object,index)=>{offsets.push(Buffer.byteLength(output,'ascii'));output+=`${index+1} 0 obj\n${object}\nendobj\n`;});const xref=Buffer.byteLength(output,'ascii');output+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n${offsets.slice(1).map(offset=>String(offset).padStart(10,'0')+' 00000 n ').join('\n')}\ntrailer << /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
  return Buffer.from(output,'ascii');
 }

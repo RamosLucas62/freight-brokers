@@ -9,6 +9,7 @@ describe('three-tier billing catalog',()=>{
   expect(plans.growth).toMatchObject({includedInvoices:1500,overageCents:50,reprocessing:true});
   expect(plans.scale).toMatchObject({includedInvoices:3000,overageCents:50,reprocessing:true});
   expect([prices.core.monthly.amount,prices.growth.monthly.amount,prices.scale.monthly.amount]).toEqual([49700,99700,149700]);
+  expect(prices.scale.semiannual.amount).toBe(808200);
  });
 
  it('preserves all three plan codes from Stripe metadata',()=>{

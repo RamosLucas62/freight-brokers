@@ -6,7 +6,7 @@ The product has three USD plans. Growth is the recommended default.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Core | 500 | US$497 | US$2,682 | US$4,970 | US$0.75 |
 | Growth (Recommended) | 1,500 | US$997 | US$5,382 | US$9,970 | US$0.50 |
-| Scale | 3,000 | US$1,497 | US$8,083.80 | US$14,970 | US$0.50 |
+| Scale | 3,000 | US$1,497 | US$8,082 | US$14,970 | US$0.50 |
 
 The included allowance resets each calendar month in the customer's configured time zone, including prepaid contracts. Overage is closed after month-end and charged automatically as a separate Stripe invoice against the saved payment method. The nine base prices remain the only catalog prices; an idempotent invoice item carries the monthly overage.
 

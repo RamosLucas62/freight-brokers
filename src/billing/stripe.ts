@@ -20,20 +20,24 @@ export async function createCheckoutSession(email:string,plan:PlanCode,period:Bi
  const price=priceId(plan,period);
  const origin=process.env.PORTAL_URL;
  if(!price||!origin)throw new Error('STRIPE_NOT_CONFIGURED');
+ const resolvedCancelUrl=cancelUrl??new URL('/',origin).href;
  const body=new URLSearchParams({
   mode:'subscription',
   'line_items[0][price]':price,
   'line_items[0][quantity]':'1',
   customer_email:email,
   success_url:new URL('/onboarding?session_id={CHECKOUT_SESSION_ID}',origin).href,
-  cancel_url:cancelUrl??new URL('/',origin).href,
+  cancel_url:resolvedCancelUrl,
   allow_promotion_codes:'true',
   'metadata[plan_code]':plan,
   'metadata[billing_period]':period,
   'subscription_data[metadata][plan_code]':plan,
   'subscription_data[metadata][billing_period]':period,
  });
- return stripe('/checkout/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`checkout-${privacyKey(`${email}:${plan}:${period}`).slice(0,48)}`}}) as Promise<StripeCheckoutSession>;
+ // A private audit and the public pricing page use different return URLs. Stripe
+ // treats reusing an idempotency key with different parameters as an error.
+ const checkoutFingerprint=privacyKey(`${email}:${plan}:${period}:${resolvedCancelUrl}`).slice(0,48);
+ return stripe('/checkout/sessions',{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded','Idempotency-Key':`checkout-${checkoutFingerprint}`}}) as Promise<StripeCheckoutSession>;
 }
 export async function retrieveCheckoutSession(id:string){
  return stripe('/checkout/sessions/'+encodeURIComponent(id)) as Promise<StripeCheckoutSession>;
