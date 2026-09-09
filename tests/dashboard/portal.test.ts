@@ -1,14 +1,18 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {createApp} from '../../src/http/app.js';
-const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,createUser:vi.fn(),getUser:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
+const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),sendSecurityEmail:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
 vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,signInWithOtp:mocks.otp}})}));
-vi.mock('../../src/config/supabase.js',()=>({timedFetch:globalThis.fetch,getSupabaseClient:()=>({from:mocks.from,rpc:mocks.rpc,auth:{admin:{createUser:mocks.createUser}}})}));
+vi.mock('../../src/config/supabase.js',()=>({timedFetch:globalThis.fetch,getSupabaseClient:()=>({from:mocks.from,rpc:mocks.rpc,auth:{admin:{createUser:mocks.createUser,generateLink:mocks.generateLink}}})}));
+vi.mock('../../src/billing/stripe.js',()=>({retrieveCheckoutSession:mocks.retrieveCheckout,applyRetentionDiscount:vi.fn(),cancelSubscriptionAtPeriodEnd:vi.fn(),createBillingPortalSession:vi.fn(),pauseSubscriptionOneMonth:vi.fn()}));
+vi.mock('../../src/notifications/security.sender.js',()=>({sendSecurityEmail:mocks.sendSecurityEmail}));
 const tenant='11111111-1111-4111-8111-111111111111';const other='22222222-2222-4222-8222-222222222222';
 let server:ReturnType<typeof createApp>,base:string;
 beforeEach(async()=>{
  vi.resetAllMocks();mocks.isAdmin=false;mocks.enabled=true;vi.stubEnv('PORTAL_URL','https://portal.example.com');vi.stubEnv('SUPABASE_ANON_KEY','public-key');vi.stubEnv('SUPABASE_URL','https://example.supabase.co');
  mocks.getUser.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'}},error:null});
  mocks.otp.mockResolvedValue({error:null});mocks.rpc.mockResolvedValue({error:null});
+ mocks.generateLink.mockResolvedValue({data:{properties:{action_link:'https://example.supabase.co/auth/v1/verify?token=private'}},error:null});
+ mocks.sendSecurityEmail.mockResolvedValue(undefined);
  mocks.from.mockImplementation(table=>['audit_admins','audit_portal_users'].includes(table)?{select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:table==='audit_admins'?(mocks.isAdmin?{user_id:'user-1'}:null):{enabled:mocks.enabled},error:null})})})}:table==='audit_memberships'?{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,audit_tenants:{id:tenant,name:'Company'}}],error:null})})}:mocks.query);
  mocks.query.select.mockReturnValue(mocks.query);mocks.query.eq.mockReturnValue(mocks.query);mocks.query.order.mockReturnValue(mocks.query);mocks.query.range.mockResolvedValue({data:[],count:0,error:null});
  mocks.query.maybeSingle.mockResolvedValue({data:null,error:null});
@@ -25,6 +29,20 @@ it('scopes and paginates every supported collection',async()=>{for(const collect
 it('rejects cross-origin mutation',async()=>{const r=await fetch(base+'/api/portal/login',{method:'POST',headers:{...headers,Origin:'https://evil.example.com'},body:JSON.stringify({email:'client@example.com'})});expect(r.status).toBe(403);expect(mocks.otp).not.toHaveBeenCalled();});
 it('requests passwordless login without creating accounts',async()=>{const r=await fetch(base+'/api/portal/login',{method:'POST',headers,body:JSON.stringify({email:'client@example.com'})});expect(r.status).toBe(200);expect(mocks.otp).toHaveBeenCalledWith({email:'client@example.com',options:{shouldCreateUser:false,emailRedirectTo:'https://portal.example.com/auth/callback'}});});
 it('does not expose account existence',async()=>{mocks.otp.mockResolvedValue({error:{status:400}});const r=await fetch(base+'/api/portal/login',{method:'POST',headers,body:JSON.stringify({email:'missing@example.com'})});expect(await r.json()).toEqual({ok:true});});
+it('resumes paid onboarding and emails one secure platform access button',async()=>{
+ mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_paid',payment_status:'paid',status:'complete',customer:'cus_1',subscription:'sub_1',customer_details:{email:'owner@example.com'},metadata:{plan_code:'scale',billing_period:'annual'}});
+ mocks.rpc.mockImplementation(async(name)=>name==='portal_onboarding_user_id'?{data:other,error:null}:name==='portal_complete_onboarding'?{data:{tenant_id:tenant,alias:'acme',audit_email:'acme@audit.aiolympian.com'},error:null}:name==='portal_save_notification_settings_v2'?{data:{pending_verification:[]},error:null}:{data:null,error:null});
+ const response=await fetch(base+'/api/portal/onboarding',{method:'POST',headers,body:JSON.stringify({session_id:'cs_test_paid',company_name:'Acme Logistics',email:'owner@example.com',timezone:'America/Los_Angeles',report_emails:['owner@example.com']})});
+ expect(response.status).toBe(200);expect(await response.json()).toMatchObject({audit_email:'acme@audit.aiolympian.com',access_email_sent:true});
+ expect(mocks.createUser).not.toHaveBeenCalled();expect(mocks.generateLink).toHaveBeenCalledWith({type:'magiclink',email:'owner@example.com',options:{redirectTo:'https://portal.example.com/auth/callback'}});
+ expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({to:'owner@example.com',subject:'Your Olympian account is ready',html:expect.stringContaining('Access the platform')}));
+});
+it('returns a resumable error when the identity lookup is not permitted',async()=>{
+ mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_paid',payment_status:'paid',status:'complete',customer_details:{email:'owner@example.com'},metadata:{plan_code:'core',billing_period:'monthly'}});
+ mocks.rpc.mockResolvedValueOnce({data:null,error:{code:'42501',message:'permission denied for table users'}});
+ const response=await fetch(base+'/api/portal/onboarding',{method:'POST',headers,body:JSON.stringify({session_id:'cs_test_paid',company_name:'Acme',email:'owner@example.com',timezone:'UTC',report_emails:['owner@example.com']})});
+ expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'We could not finish setting up your account. Your payment is safe; please try again.'});expect(mocks.createUser).not.toHaveBeenCalled();
+});
 it('validates magic link token before creating strict HttpOnly sessions',async()=>{const token='x'.repeat(30);const r=await fetch(base+'/api/portal/session',{method:'POST',headers,body:JSON.stringify({access_token:token})});expect(r.status).toBe(200);expect(mocks.getUser).toHaveBeenCalledWith(token);expect(r.headers.get('set-cookie')).toContain('HttpOnly; SameSite=Strict; Path=/; Max-Age=3600; Secure');});
 it('rejects cross-company retry',async()=>{const r=await fetch(base+`/api/portal/jobs/${tenant}/retry?company=${other}`,{method:'POST',headers,body:JSON.stringify({note:'Review note'})});expect(r.status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalled();});
 it('requires review note and uses verified identity for atomic action',async()=>{const path=base+`/api/portal/jobs/${other}/review?company=${tenant}`;expect((await fetch(path,{method:'POST',headers,body:JSON.stringify({note:'x'})})).status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalled();expect((await fetch(path,{method:'POST',headers,body:JSON.stringify({note:'Reviewed carrier details',user_id:'attacker'})})).status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('portal_job_action',{p_user:'user-1',p_tenant:tenant,p_job:other,p_action:'review',p_note:'Reviewed carrier details'});});

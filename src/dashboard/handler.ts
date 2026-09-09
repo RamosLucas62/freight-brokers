@@ -41,8 +41,16 @@ const escapeHtml=(value:string)=>value.replace(/[&<>"']/g,char=>({'&':'&amp;','<
 async function notifyOwner(email:string|undefined,tenant:string,summary:string){
  if(!email)return;await sendSecurityEmail({to:email,subject:'Security change to your Freight Audit account',idempotencyKey:`security-change-${tenant}-${createHash('sha256').update(summary).digest('hex').slice(0,32)}-${Math.floor(Date.now()/300000)}`,html:`<h1>Account security change</h1><p>${escapeHtml(summary)}</p><p>If you did not make this change, contact support and revoke portal access immediately.</p>`});
 }
+async function sendWelcomeEmail(input:{email:string;company:string;plan:string;accessUrl:string;sessionId:string}){
+ const button='display:inline-block;background:#f4512c;color:#fff;text-decoration:none;font-weight:700;padding:14px 22px;border:2px solid #111;border-radius:6px;box-shadow:4px 4px 0 #111';
+ await sendSecurityEmail({
+  to:input.email,subject:'Your Olympian account is ready',idempotencyKey:`portal-welcome-${createHash('sha256').update(input.sessionId).digest('hex').slice(0,40)}`,
+  html:`<h1>Welcome to Olympian</h1><p>Your ${escapeHtml(input.plan)} subscription for <strong>${escapeHtml(input.company)}</strong> is active and your secure workspace is ready.</p><p><a href="${escapeHtml(input.accessUrl)}" style="${button}">Access the platform</a></p><p>This private link signs you in and expires for your protection. If it expires, request a new access link on the portal using ${escapeHtml(input.email)}.</p><p>If you did not create this subscription, contact support immediately.</p>`,
+ });
+}
 export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:RateLimiter):Promise<boolean>{
  const url=new URL(req.url??'/', 'http://localhost');
+ let operation:string|undefined;
  const assets:Record<string,[string,string]>={'/':['index.html','text/html'],'/onboarding':['index.html','text/html'],'/verify-recipient':['index.html','text/html'],'/auth/callback':['index.html','text/html'],'/dashboard.js':['dashboard.js','text/javascript'],'/dashboard.css':['dashboard.css','text/css'],'/admin.js':['admin.js','text/javascript']};
  const asset=assets[url.pathname];
  if(!asset&&!url.pathname.startsWith('/api/portal/'))return false;
@@ -99,28 +107,43 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(checkout.customer_details?.email?.toLowerCase()!==email){send(403,{error:'Use the same email address used during checkout.'});return true;}
  const slugBase=input.company_name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,45)||'customer';
  const db=getSupabaseClient();
+ operation='onboarding.identity_lookup';
  const existing=await db.rpc('portal_onboarding_user_id',{p_email:email});
+ if(existing.error)throw existing.error;
  let userId=existing.data as string|null;
  if(!userId){
+  operation='onboarding.identity_create';
   const user=await db.auth.admin.createUser({email,email_confirm:false});
   userId=user.data.user?.id??null;
   if(user.error||!userId)throw new Error('Could not create user');
  }
  let result:{data:any,error:any}|undefined;
+ operation='onboarding.workspace_create';
  for(let i=0;i<8;i++){
   result=await db.rpc('portal_complete_onboarding',{p_session_id:input.session_id,p_company_name:input.company_name,p_alias:i?`${slugBase}-${i+1}`:slugBase,p_user_id:userId,p_email:email,p_stripe_customer_id:String(checkout.customer??''),p_stripe_subscription_id:String(checkout.subscription??''),p_timezone:input.timezone,p_report_emails:[email]});
   if(!result.error)break;
  }
  if(result?.error)throw result.error;
  const onboardTenant=String(result?.data?.tenant_id??'');
+ operation='onboarding.plan_assign';
  const assigned=await db.rpc('assign_billing_plan',{p_tenant:onboardTenant,p_session_id:input.session_id,p_plan:selectedPlan,p_period:selectedPeriod});if(assigned.error)throw assigned.error;
+ operation='onboarding.owner_assign';
  const owner=await db.rpc('secure_onboarding_owner',{p_tenant:onboardTenant,p_user:userId});if(owner.error)throw owner.error;
  const requested=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];if(!requested.includes(email))requested.unshift(email);
  const contacts=confirmationContacts(requested);
+ operation='onboarding.notifications_save';
  const savedContacts=await db.rpc('portal_save_notification_settings_v2',{p_user:userId,p_tenant:onboardTenant,p_timezone:input.timezone,p_contacts:contacts.map(({email,token_hash})=>({email,token_hash})),p_ip_fingerprint:privacyKey(ip).slice(0,32)});if(savedContacts.error)throw savedContacts.error;
- const pending=new Set<string>(savedContacts.data?.pending_verification??[]);await sendConfirmations(contacts.filter(contact=>pending.has(contact.email)),origin);
- await auth().auth.signInWithOtp({email,options:{shouldCreateUser:false,emailRedirectTo:new URL('/auth/callback',origin).href}});
- send(200,result?.data);return true;
+ operation='onboarding.access_link_create';
+ const access=await db.auth.admin.generateLink({type:'magiclink',email,options:{redirectTo:new URL('/auth/callback',origin).href}});
+ const accessUrl=access.data?.properties?.action_link;
+ if(access.error||!accessUrl)throw access.error??new Error('PORTAL_ACCESS_LINK_NOT_CREATED');
+ operation='onboarding.welcome_email_send';
+ await sendWelcomeEmail({email,company:input.company_name,plan:plans[selectedPlan].name,accessUrl,sessionId:input.session_id});
+ const pending=new Set<string>(savedContacts.data?.pending_verification??[]);
+ try{await sendConfirmations(contacts.filter(contact=>pending.has(contact.email)),origin);}
+ catch(error){failure('portal.onboarding.report_confirmation_failed',error,{request_id:requestId(req),tenant:onboardTenant,pending_count:pending.size});}
+ operation=undefined;
+ send(200,{...result?.data,access_email_sent:true});return true;
  }
  if(url.pathname==='/api/portal/session'&&req.method==='POST'){
  if(!(await take({scope:'session-ip',limit:10,windowSeconds:300,failClosed:true})))return true;
@@ -293,6 +316,8 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(error)throw error;send(200,{rows:data,total:count,page});return true;
  }
  send(404,{error:'Page not found.'});
- }catch(error){failure('portal.request.failed',error,{request_id:requestId(req),path:url.pathname,method:req.method});send(error instanceof HttpError?error.status:error instanceof z.ZodError||error instanceof SyntaxError?400:503,{error:'Unable to complete the request. Check your information and try again.'});}
+ }catch(error){failure('portal.request.failed',error,{request_id:requestId(req),path:url.pathname,method:req.method,...(operation?{operation}:{})});
+  const onboardingMessage=operation?.startsWith('onboarding.')?(operation==='onboarding.welcome_email_send'||operation==='onboarding.access_link_create'?'Your account was created, but the access email could not be sent. Please try again.':'We could not finish setting up your account. Your payment is safe; please try again.'):'Unable to complete the request. Check your information and try again.';
+  send(error instanceof HttpError?error.status:error instanceof z.ZodError||error instanceof SyntaxError?400:503,{error:onboardingMessage});}
  return true;
 }

@@ -29,7 +29,7 @@ $('onboarding-form').addEventListener('submit',async event=>{
  try{
   const reportEmails=$('report-emails').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);
   const data=await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:$('onboarding-email').value.trim(),timezone:$('timezone').value.trim(),report_emails:reportEmails})});
-  $('onboarding-message').innerHTML=`Account created. Send invoices to <strong>${escape(data.audit_email)}</strong>. Check your inbox for the portal sign-in link.`;
+  $('onboarding-message').innerHTML=`Account created. Send invoices to <strong>${escape(data.audit_email)}</strong>. We sent a confirmation email with your secure platform access button.`;
  }
  catch(error){$('onboarding-message').textContent=error.message;}finally{button.disabled=false;}
 });
