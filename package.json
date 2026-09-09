@@ -9,6 +9,7 @@
     "dev": "npm run build && npm start --",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pod:process": "npm run build && node -r dotenv/config dist/pod/cli.js",
     "db:migrate": "node -r dotenv/config scripts/migrate.cjs",
     "typecheck": "tsc --noEmit",
     "start:server": "node -r dotenv/config dist/server.js"
@@ -17,6 +18,7 @@
     "@aws-sdk/client-s3": "^3.1127.0",
     "@supabase/supabase-js": "^2",
     "dotenv": "^16",
+    "exceljs": "^4.4.0",
     "fflate": "^0.8.3",
     "ioredis": "^6.0.0",
     "stripe": "^22.6.1",

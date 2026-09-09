@@ -7,6 +7,8 @@ import { StubExtractor } from '../../src/extraction/stub.extractor.js';
 import { makeInvoice } from '../fixtures/invoice.fixture.js';
 import { makeCarrierResult } from '../fixtures/carrier.fixture.js';
 import type { InvoiceRecord } from '../../src/types/invoice.types.js';
+import type { PodExtractionResult, PodField } from '../../src/pod/types.js';
+import type { RateConfirmationExtractionResult } from '../../src/rate-confirmation/types.js';
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'freight-test-')); await writeFile(join(dir, 'a.pdf'), '%PDF-1.4 test'); });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
@@ -58,6 +60,42 @@ describe('audit transaction boundary', () => {
   it('propagates atomic commit failure instead of reporting success', async () => {
     const opts = options(); opts.store.commit = vi.fn(async () => { throw new Error('history changed'); });
     await expect(runAuditPipeline(opts)).rejects.toThrow('history changed');
+  });
+  it('persists supporting-document reconciliation in the audit report', async () => {
+    const field = <T>(value: T): PodField<T> => ({
+      value,
+      confidence: 0.99,
+      evidence: { page: 1, text: String(value), bounding_box: null },
+    });
+    const pod: PodExtractionResult = {
+      source_file: 'POD_LOAD-9876.pdf',
+      source_kind: 'ocr',
+      fields: {
+        load_number: field('LOAD-9876'), bol_number: field('BOL-1'), delivery_date: field('2024-01-16'),
+        delivery_time: field('12:00'), receiver_name: field('Receiver'), delivery_location: field('Dallas, TX'),
+        signature_present: field(true), damage_or_shortage_noted: field(false), exception_notes: field('No exceptions'),
+      },
+      quality: { score: 1, rotation_degrees: 0, perspective_distortion: false, blur: false, glare_or_shadow: false, cropped: false, reasons: [] },
+      requires_human_review: false,
+      raw: {},
+    };
+    const rate: RateConfirmationExtractionResult = {
+      source_file: 'RATE_LOAD-9876.pdf',
+      fields: {
+        load_number: field('LOAD-9876'), bol_number: field('BOL-1'), carrier_name: field('SWIFT TRANSPORT LLC'),
+        origin: field('Chicago, IL'), destination: field('Dallas, TX'), linehaul_amount: field(2000),
+        total_amount: field(2600),
+        accessorials: [{ type: 'FUEL_SURCHARGE', description: 'Fuel surcharge', amount: 500, confidence: 0.99, evidence: field(500).evidence }],
+      },
+      requires_human_review: false,
+      raw: {},
+    };
+    const opts = { ...options(), pods: [pod], rateConfirmations: [rate], reconcileSupportingDocuments: true };
+    const report = await runAuditPipeline(opts);
+    expect(report.exceptions).toEqual(expect.arrayContaining([expect.objectContaining({ tipo_regra: 'RATE_CONFIRMATION_MISMATCH' })]));
+    expect(report.reconciliation).toMatchObject({ divergent: 1, supporting_documents: 2 });
+    expect((opts.store.commit.mock.calls as any)[0][1]).toEqual(expect.arrayContaining([expect.objectContaining({ tipo_regra: 'RATE_CONFIRMATION_MISMATCH' })]));
+    expect((opts.store.commit.mock.calls as any)[0][2].reconciliation).toMatchObject({ divergent: 1, supporting_documents: 2 });
   });
 });
 

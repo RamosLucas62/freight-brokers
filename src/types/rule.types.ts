@@ -7,7 +7,10 @@ export type RuleName =
   | 'DUPLICATE_PROBABLE'
   | 'BANKING_CHANGE'
   | 'MC_DIVERGENCE'
-  | 'AUTHORITY_INACTIVE';
+  | 'AUTHORITY_INACTIVE'
+  | 'RATE_CONFIRMATION_MISMATCH'
+  | 'UNSUPPORTED_ACCESSORIAL'
+  | 'UNBILLED_ACCESSORIAL';
 
 export interface RuleException {
   invoice_id:      string;

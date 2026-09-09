@@ -11,6 +11,11 @@ import {ExtractionResultSchema} from '../extraction/schema.js';
 import {scanPdf} from '../security/pdf.js';
 import {createHash} from 'node:crypto';
 import {failure,info,warn} from '../observability/logger.js';
+import {OpenRouterDocumentClassifier,type DocumentType} from '../documents/classifier.js';
+import {OpenRouterPodExtractor} from '../pod/openrouter.extractor.js';
+import {PodExtractionSchema} from '../pod/schema.js';
+import {OpenRouterRateConfirmationExtractor} from '../rate-confirmation/openrouter.extractor.js';
+import {RateConfirmationExtractionSchema} from '../rate-confirmation/schema.js';
 
 export async function processJob(job:repository.InboundJob,client:ResendReceivingClient) {
  let dir:string|undefined;
@@ -43,13 +48,20 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    const path=join(dir,`${attachment.id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);
    labels[path]=`resend/${job.email_id}/${attachment.id}.pdf`;
   }
-  stage='load_extraction_cache';const cached=await repository.storedExtractions(job);
+  stage='load_extraction_cache';const cached=await repository.storedDocuments(job);const classifier=new OpenRouterDocumentClassifier();
+  const invoicePaths:string[]=[];const pods=[];const rateConfirmations=[];
+  for(const path of paths){const id=basename(path,'.pdf');const attachment=pdfs.find(item=>item.id===id)!;const stored=cached.get(id);let documentType:DocumentType;
+   if(stored)documentType=stored.documentType;else{stage='classify_document';documentType=await classifier.classify(path,attachment.filename??'');await repository.setDocumentType(job,id,documentType);}
+   if(documentType==='invoice'){invoicePaths.push(path);continue;}
+   if(documentType==='pod'){stage='extract_pod';const result=stored?.extraction?PodExtractionSchema.parse(stored.extraction):await new OpenRouterPodExtractor().extract(path);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'pod',result);pods.push(result);continue;}
+   stage='extract_rate_confirmation';const result=stored?.extraction?RateConfirmationExtractionSchema.parse(stored.extraction):await new OpenRouterRateConfirmationExtractor().extract(path);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'rate_confirmation',result);rateConfirmations.push(result);
+  }
   stage='audit_pipeline';
-  const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:paths,sourceLabels:labels,
+  const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:invoicePaths,sourceLabels:labels,pods,rateConfirmations,reconcileSupportingDocuments:true,
    ctx:{run_id:job.id,carrierCache:new Map(),cacheTtlHours:Number(process.env.CARRIER_CACHE_TTL_HOURS??4)},
    getCarrier,store,extractor:{async extract(path){
     const id=basename(path,'.pdf');
-    const stored=cached.get(id);
+    const stored=cached.get(id)?.extraction;
     if(stored){const parsed=ExtractionResultSchema.parse(stored);await repository.recordBillableInvoice(job,id,hashes.get(id)!);return parsed;}
     const result=await extractor.extract(path);
     await repository.cacheExtraction(job,id,result);
@@ -58,8 +70,8 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    }},
   });
   // Duplicate-only runs are kept in the job result even when no new audit_run is needed.
-  if(attachments.length!==pdfs.length)report.warnings?.push(`${attachments.length-pdfs.length} non-PDF attachments were not processed.`);
-  stage='finish_job';await repository.finish(job,'completed',report,null);info('inbound.worker.completed',{job_id:job.id,tenant_id:job.tenant_id,duration_ms:Date.now()-started,pdf_count:pdfs.length,invoice_count:report.total_invoices_processed,exception_count:report.total_exceptions});
+  if(attachments.length!==pdfs.length)report.warnings?.push(`${attachments.length-pdfs.length} non-PDF attachments were not processed by automatic email intake; use the POD CLI for images or spreadsheets.`);
+  stage='finish_job';await repository.finish(job,'completed',report,null);info('inbound.worker.completed',{job_id:job.id,tenant_id:job.tenant_id,duration_ms:Date.now()-started,pdf_count:pdfs.length,pod_count:pods.length,rate_confirmation_count:rateConfirmations.length,invoice_count:report.total_invoices_processed,exception_count:report.total_exceptions});
  }catch(error){
   // A failed/uncertain paid call is never automatically repeated. Review before requeueing.
   const detail=error instanceof Error?error.message:'unknown_error';

@@ -3,6 +3,7 @@ import type { InvoiceExtractionResult } from '../types/invoice.types.js';
 import type { AuditReport } from '../types/report.types.js';
 import { recipientAliases, type ReceivedEvent } from './events.js';
 import {invoiceObjectKey,putInvoiceObject} from '../storage/r2.js';
+import type {DocumentType} from '../documents/classifier.js';
 export interface InboundJob { id:string; tenant_id:string; email_id:string; }
 export async function authorizeInbound(job:InboundJob,sender:string):Promise<void>{
  const {data,error}=await getSupabaseClient().rpc('authorize_inbound_processing',{p_tenant:job.tenant_id,p_sender:sender});
@@ -38,9 +39,22 @@ export async function saveAttachment(job:InboundJob,id:string,filename:string,by
  if(saved.error)throw new Error('ATTACHMENT_METADATA_FAILED');
 }
 export async function cacheExtraction(job:InboundJob,id:string,result:InvoiceExtractionResult) {
- const {error}=await getSupabaseClient().from('audit_inbound_attachments').update({extraction:result})
+ const {error}=await getSupabaseClient().from('audit_inbound_attachments').update({document_type:'invoice',extraction:result})
  .eq('tenant_id',job.tenant_id).eq('job_id',job.id).eq('attachment_id',id);
  if(error)throw new Error('EXTRACTION_CACHE_FAILED');
+}
+export interface StoredDocument {documentType:DocumentType;extraction:unknown|null;}
+export async function cacheSupportingExtraction(job:InboundJob,id:string,documentType:Exclude<DocumentType,'invoice'>,result:unknown){
+ const {error}=await getSupabaseClient().from('audit_inbound_attachments').update({document_type:documentType,extraction:result})
+ .eq('tenant_id',job.tenant_id).eq('job_id',job.id).eq('attachment_id',id);if(error)throw new Error('EXTRACTION_CACHE_FAILED');
+}
+export async function setDocumentType(job:InboundJob,id:string,documentType:DocumentType){
+ const {error}=await getSupabaseClient().from('audit_inbound_attachments').update({document_type:documentType})
+ .eq('tenant_id',job.tenant_id).eq('job_id',job.id).eq('attachment_id',id);if(error)throw new Error('DOCUMENT_CLASSIFICATION_FAILED');
+}
+export async function storedDocuments(job:InboundJob):Promise<Map<string,StoredDocument>>{
+ const {data,error}=await getSupabaseClient().from('audit_inbound_attachments').select('attachment_id,document_type,extraction').eq('tenant_id',job.tenant_id).eq('job_id',job.id);
+ if(error)throw new Error('EXTRACTION_CACHE_FAILED');return new Map((data??[]).filter(row=>row.document_type).map(row=>[row.attachment_id,{documentType:row.document_type as DocumentType,extraction:row.extraction??null}]));
 }
 export async function recordBillableInvoice(job:InboundJob,id:string,documentHash:string):Promise<boolean>{
  const {data,error}=await getSupabaseClient().rpc('record_billable_invoice',{p_tenant:job.tenant_id,p_job:job.id,p_attachment:id,p_document_hash:documentHash});
