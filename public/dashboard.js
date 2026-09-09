@@ -28,13 +28,14 @@ $('onboarding-form').addEventListener('submit',async event=>{
  event.preventDefault();const params=new URLSearchParams(location.search);const button=event.submitter;button.disabled=true;$('onboarding-message').textContent='Creating your account…';
  try{
   const reportEmails=$('report-emails').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);
-  const data=await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:$('onboarding-email').value.trim(),timezone:$('timezone').value.trim(),report_emails:reportEmails})});
-  $('onboarding-message').innerHTML=`Account created. Send invoices to <strong>${escape(data.audit_email)}</strong>. We sent a confirmation email with your secure platform access button.`;
+  await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:$('onboarding-email').value.trim(),timezone:$('timezone').value.trim(),report_emails:reportEmails})});
+  location.assign('/onboarding/thanks');
  }
  catch(error){$('onboarding-message').textContent=error.message;}finally{button.disabled=false;}
 });
 async function initialize(){
  try{
+ if(location.pathname==='/onboarding/thanks'){$('login').hidden=true;$('thanks-page').hidden=false;return;}
  await initializeSecurity();
  if(location.pathname==='/verify-recipient'){
   const token=new URLSearchParams(location.search).get('token');if(!token)throw new Error('This confirmation link is invalid.');
@@ -43,7 +44,7 @@ async function initialize(){
  if(location.pathname==='/onboarding'){$('signin-panel').hidden=true;$('onboarding-panel').hidden=false;$('timezone').value=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';$('onboarding-email').addEventListener('input',()=>{if(!$('report-emails').value.trim())$('report-emails').value=$('onboarding-email').value.trim();});return;}
  const hash=new URLSearchParams(location.hash.slice(1));
  if(hash.has('error_description')){history.replaceState(null,'','/');throw new Error('This link has expired or has already been used. Request a new link.');}
- if(hash.has('access_token')){const access_token=hash.get('access_token'),refresh_token=hash.get('refresh_token');history.replaceState(null,'','/');await api('session',{method:'POST',body:JSON.stringify({access_token,refresh_token})});}
+ if(hash.has('access_token')){const access_token=hash.get('access_token'),refresh_token=hash.get('refresh_token');history.replaceState(null,'','/');await api('session',{method:'POST',body:JSON.stringify({access_token,...(refresh_token?{refresh_token}:{})})});}
  const me=await api('me');currentUser=me;companies=me.companies??[];$('login').hidden=true;$('portal').hidden=false;$('account-email').textContent=me.email;
  if(me.is_admin){adminPortal.start(me,{api,onOpen:openCompany,onNavigate:()=>{requestId++;$('refresh').disabled=false;message('');}});return;}
  $('company').innerHTML=companies.map(c=>`<option value="${escape(c.id)}">${escape(c.name)}</option>`).join('');

@@ -51,7 +51,7 @@ async function sendWelcomeEmail(input:{email:string;company:string;plan:string;a
 export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:RateLimiter):Promise<boolean>{
  const url=new URL(req.url??'/', 'http://localhost');
  let operation:string|undefined;
- const assets:Record<string,[string,string]>={'/':['index.html','text/html'],'/onboarding':['index.html','text/html'],'/verify-recipient':['index.html','text/html'],'/auth/callback':['index.html','text/html'],'/dashboard.js':['dashboard.js','text/javascript'],'/dashboard.css':['dashboard.css','text/css'],'/admin.js':['admin.js','text/javascript']};
+ const assets:Record<string,[string,string]>={'/':['index.html','text/html'],'/onboarding':['index.html','text/html'],'/onboarding/thanks':['index.html','text/html'],'/verify-recipient':['index.html','text/html'],'/auth/callback':['index.html','text/html'],'/dashboard.js':['dashboard.js','text/javascript'],'/dashboard.css':['dashboard.css','text/css'],'/admin.js':['admin.js','text/javascript']};
  const asset=assets[url.pathname];
  if(!asset&&!url.pathname.startsWith('/api/portal/'))return false;
  const send=(status:number,data:unknown)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
@@ -147,7 +147,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  }
  if(url.pathname==='/api/portal/session'&&req.method==='POST'){
  if(!(await take({scope:'session-ip',limit:10,windowSeconds:300,failClosed:true})))return true;
- const {access_token,refresh_token}=z.object({access_token:z.string().min(20).max(12000),refresh_token:z.string().min(20).max(12000).optional()}).parse(await body(req));
+ const {access_token,refresh_token}=z.object({access_token:z.string().min(20).max(12000),refresh_token:z.string().min(1).max(12000).nullish()}).parse(await body(req));
  const {data,error}=await auth().auth.getUser(access_token);
  if(error||!data.user){send(401,{error:'Invalid or expired link. Request a new link.'});return true;}
  res.setHeader('Set-Cookie',[cookieValue('audit_session',access_token,3600),cookieValue('audit_refresh',refresh_token??'',refresh_token?604800:0),csrfCookie(csrfToken(access_token),3600)]);send(200,{ok:true});return true;
