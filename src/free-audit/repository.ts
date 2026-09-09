@@ -2,6 +2,7 @@ import {getSupabaseClient} from '../config/supabase.js';
 import type {AuditReport} from '../types/report.types.js';
 import type {FreeAuditAttachment,FreeAuditFollowup,FreeAuditPublicResult,FreeAuditRegistration,FreeAuditRequest} from './types.js';
 import {createHash} from 'node:crypto';
+import {recommendedPlan} from './recommendation.js';
 
 export async function registerRequest(input:{email:string;name:string;company:string;phone?:string;loads?:string;tokenHash:string;ipFingerprint:string}):Promise<FreeAuditRegistration>{
  const {data,error}=await getSupabaseClient().rpc('register_free_audit_request',{
@@ -95,7 +96,10 @@ export async function activateResult(requestId:string,tokenHash:string,plan:'cor
 export async function publicResult(tokenHash:string):Promise<FreeAuditPublicResult|null>{
  const {data,error}=await getSupabaseClient().from('free_audit_requests').select('*').eq('result_token_hash',tokenHash).gt('result_expires_at',new Date().toISOString()).not('result','is',null).maybeSingle();
  if(error)throw new Error('FREE_AUDIT_RESULT_LOAD_FAILED');
- return data as FreeAuditPublicResult|null;
+ if(!data)return null;
+ const corrected=recommendedPlan(data.loads_per_month);
+ if(data.recommended_plan!==corrected){await getSupabaseClient().from('free_audit_requests').update({recommended_plan:corrected,updated_at:new Date().toISOString()}).eq('id',data.id);data.recommended_plan=corrected;}
+ return data as FreeAuditPublicResult;
 }
 export async function recordFunnelEvent(requestId:string,eventName:string,metadata:Record<string,unknown>={}):Promise<void>{
  const {error}=await getSupabaseClient().from('free_audit_funnel_events').insert({request_id:requestId,event_name:eventName,metadata});if(error)throw new Error('FREE_AUDIT_EVENT_FAILED');
