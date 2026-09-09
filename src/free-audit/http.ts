@@ -54,7 +54,8 @@ type repositoryResult=NonNullable<Awaited<ReturnType<typeof repository.publicRes
 function confirmationPage(success:boolean,offerUrl:string){
  const title=success?'Email confirmed. Your audit is underway.':'This confirmation link is no longer valid.';
  const detail=success?'We are reviewing your carrier invoices now. Your report will arrive by email when it is ready.':'The link may have expired or already been used. Return to the free audit page to request a new one.';
- return `<main class="shell"><section class="copy"><h1>${title}</h1><p>${detail}</p></section><section class="card"><div class="status">${success?'✓':'!'}</div><h2>${success?'Nothing else to do':'Request a fresh link'}</h2><p>${success?'You can close this page. We will keep you updated in your inbox.':'Your uploaded files will not be processed without a valid confirmation.'}</p><a class="action" href="${escapeHtml(offerUrl)}">${success?'Explore Olympian plans':'Return to Olympian'}</a></section></main>`;
+ const recovery=success?'':`<a class="action" href="${escapeHtml(offerUrl)}">Return to Olympian</a>`;
+ return `<main class="shell"><section class="copy"><h1>${title}</h1><p>${detail}</p></section><section class="card"><div class="status">${success?'✓':'!'}</div><h2>${success?'Nothing else to do':'Request a fresh link'}</h2><p>${success?'You can close this page. We will keep you updated in your inbox.':'Your uploaded files will not be processed without a valid confirmation.'}</p>${recovery}</section></main>`;
 }
 function retryPage(token:string,valid:boolean,state:'ready'|'uploaded'|'error'='ready'){
  const action=`/free-audit/retry?token=${encodeURIComponent(token)}`;

@@ -67,7 +67,7 @@ describe('free audit public boundary',()=>{
  });
  it('renders a branded confirmation page compatible with the restrictive CSP',async()=>{
   mocks.verifyRequest.mockResolvedValue('11111111-1111-4111-8111-111111111111');const response=await fetch(base+`/free-audit/verify?token=${'a'.repeat(43)}`);const html=await response.text();
-  expect(html).toContain('Your audit is underway');expect(html).toContain('class="card"');expect(response.headers.get('content-security-policy')).toMatch(/style-src 'nonce-[A-Za-z0-9_-]+'/);
+  expect(html).toContain('Your audit is underway');expect(html).toContain('class="card"');expect(html).not.toContain('Explore Olympian plans');expect(html).not.toContain('class="action"');expect(response.headers.get('content-security-policy')).toMatch(/style-src 'nonce-[A-Za-z0-9_-]+'/);
  });
  it('lets a failed verified lead upload replacement files without entering contact data again',async()=>{
   const token='b'.repeat(43);mocks.inspectRetry.mockResolvedValue(true);mocks.beginRetry.mockResolvedValue('11111111-1111-4111-8111-111111111111');mocks.finishRetry.mockResolvedValue(undefined);
