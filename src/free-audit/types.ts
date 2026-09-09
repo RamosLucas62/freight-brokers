@@ -10,7 +10,13 @@ export interface FreeAuditRequest {
  status:string;
  attempts:number;
  result:AuditReport|null;
+ result_token_hash?:string|null;
+ result_expires_at?:string|null;
+ recommended_plan?:'core'|'growth'|'scale'|null;
 }
+
+export interface FreeAuditPublicResult extends FreeAuditRequest {recommended_plan:'core'|'growth'|'scale';}
+export interface FreeAuditFollowup {request_id:string;day_offset:1|3|5|10|30;email:string;contact_name:string;company_name:string;loads_per_month:string|null;recommended_plan:'core'|'growth'|'scale';result:AuditReport;}
 
 export interface FreeAuditAttachment {
  request_id:string;
