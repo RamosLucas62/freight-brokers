@@ -56,7 +56,7 @@ const stopNotifications=config.WORKER_ENABLED==='true'
  ?startNotificationWorker(new ResendSender(config.RESEND_API_KEY,config.RESEND_FROM_EMAIL),config.PORTAL_URL)
  :async()=>{};
 const stopFreeAudits=config.WORKER_ENABLED==='true'
- ?startFreeAuditWorker(new ResendSender(config.RESEND_API_KEY,config.RESEND_FROM_EMAIL),config.FREE_AUDIT_OFFER_URL,config.FREE_AUDIT_PUBLIC_URL)
+ ?startFreeAuditWorker(new ResendSender(config.RESEND_API_KEY,config.RESEND_FROM_EMAIL),config.FREE_AUDIT_OFFER_URL,config.FREE_AUDIT_PUBLIC_URL,config.CSRF_SECRET)
  :async()=>{};
 const stopBilling=config.WORKER_ENABLED==='true'?startBillingMaintenanceWorker():async()=>{};
 server.listen(config.PORT,'0.0.0.0',()=>info('server.started',{port:config.PORT,workers_enabled:config.WORKER_ENABLED==='true',node_env:process.env.NODE_ENV??'unknown'}));

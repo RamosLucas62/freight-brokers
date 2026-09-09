@@ -6,6 +6,7 @@ const mocks=vi.hoisted(()=>({
  inspectRetry:vi.fn(),beginRetry:vi.fn(),finishRetry:vi.fn(),failRetry:vi.fn(),clearAttachments:vi.fn(),loadAttachments:vi.fn(),
  putInvoiceObject:vi.fn(),deleteInvoiceObjects:vi.fn(),sendSecurityEmail:vi.fn(),verifyTurnstile:vi.fn(),
  createCheckoutSession:vi.fn(),
+ publicResult:vi.fn(),recordFunnelEvent:vi.fn(),recordCheckoutStarted:vi.fn(),unsubscribe:vi.fn(),
 }));
 vi.mock('../../src/free-audit/repository.js',()=>({...mocks,claimRequest:vi.fn(),saveResult:vi.fn(),finishRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn(),issueRetry:vi.fn()}));
 vi.mock('../../src/security/turnstile.js',()=>({verifyTurnstile:mocks.verifyTurnstile}));
@@ -17,7 +18,7 @@ import {createFreeAuditHttpHandler} from '../../src/free-audit/http.js';
 const limiter={consume:vi.fn(async()=>({allowed:true,limit:3,remaining:2,retryAfter:60})),close:vi.fn(async()=>{})};
 let server:ReturnType<typeof createServer>;let base:string;
 beforeEach(async()=>{
- vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.createCheckoutSession.mockResolvedValue({url:'https://checkout.stripe.test/session'});mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);mocks.loadAttachments.mockResolvedValue([]);
+ vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.createCheckoutSession.mockResolvedValue({url:'https://checkout.stripe.test/session'});mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);mocks.loadAttachments.mockResolvedValue([]);mocks.recordFunnelEvent.mockResolvedValue(undefined);mocks.recordCheckoutStarted.mockResolvedValue(undefined);
  const handler=createFreeAuditHttpHandler({allowedOrigins:['https://aiolympian.com','https://www.aiolympian.com'],publicUrl:'https://api.audit.aiolympian.com',offerUrl:'https://aiolympian.com/pricing'});
  server=createServer((req,res)=>void handler(req,res,limiter));await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -78,4 +79,6 @@ describe('free audit public boundary',()=>{
  it('does not expose the replacement form for an expired retry token',async()=>{
   mocks.inspectRetry.mockResolvedValue(false);const response=await fetch(base+`/free-audit/retry?token=${'c'.repeat(43)}`);expect(response.status).toBe(400);expect(await response.text()).not.toContain('type="file"');
  });
+ it('renders the private result, product bridge and recommended plan',async()=>{const token='d'.repeat(43);mocks.publicResult.mockResolvedValue({id:'11111111-1111-4111-8111-111111111111',company_name:'Acme',recommended_plan:'growth',result:{run_id:'r',generated_at:new Date().toISOString(),total_invoices_processed:6,total_exceptions:2,valor_total_under_review:10855,exceptions:[{invoice_id:'i',tipo_regra:'DUPLICATE',rule_label:'Duplicate billing',valor_envolvido:100,descricao:'review',source_reference:{file:'private.pdf',page:1},metadata:{}}]}});const response=await fetch(base+`/free-audit/result?token=${token}`);const html=await response.text();expect(response.status).toBe(200);expect(html).toContain('$10,855');expect(html).toContain('Invoice + rate con + POD');expect(html).toContain('accessorial verification');expect(html).toContain('Growth');expect(html).not.toContain('private.pdf');expect(mocks.recordFunnelEvent).toHaveBeenCalledWith(expect.any(String),'result_opened');});
+ it('protects report downloads with the private token',async()=>{mocks.publicResult.mockResolvedValue(null);const response=await fetch(base+`/free-audit/result?token=${'e'.repeat(43)}&format=pdf`);expect(response.status).toBe(404);expect(response.headers.get('cache-control')).toBe('no-store');});
 });

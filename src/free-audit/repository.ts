@@ -1,6 +1,6 @@
 import {getSupabaseClient} from '../config/supabase.js';
 import type {AuditReport} from '../types/report.types.js';
-import type {FreeAuditAttachment,FreeAuditRegistration,FreeAuditRequest} from './types.js';
+import type {FreeAuditAttachment,FreeAuditFollowup,FreeAuditPublicResult,FreeAuditRegistration,FreeAuditRequest} from './types.js';
 import {createHash} from 'node:crypto';
 
 export async function registerRequest(input:{email:string;name:string;company:string;phone?:string;loads?:string;tokenHash:string;ipFingerprint:string}):Promise<FreeAuditRegistration>{
@@ -87,6 +87,25 @@ export async function saveResult(requestId:string,report:AuditReport):Promise<vo
  const {error}=await getSupabaseClient().from('free_audit_requests').update({result:report,updated_at:new Date().toISOString()}).eq('id',requestId).eq('status','processing');
  if(error)throw new Error('FREE_AUDIT_RESULT_SAVE_FAILED');
 }
+
+export async function activateResult(requestId:string,tokenHash:string,plan:'core'|'growth'|'scale'):Promise<void>{
+ const {data,error}=await getSupabaseClient().rpc('activate_free_audit_result',{p_request:requestId,p_token_hash:tokenHash,p_plan:plan});
+ if(error||!data)throw new Error('FREE_AUDIT_RESULT_ACTIVATION_FAILED');
+}
+export async function publicResult(tokenHash:string):Promise<FreeAuditPublicResult|null>{
+ const {data,error}=await getSupabaseClient().from('free_audit_requests').select('*').eq('result_token_hash',tokenHash).gt('result_expires_at',new Date().toISOString()).not('result','is',null).maybeSingle();
+ if(error)throw new Error('FREE_AUDIT_RESULT_LOAD_FAILED');
+ return data as FreeAuditPublicResult|null;
+}
+export async function recordFunnelEvent(requestId:string,eventName:string,metadata:Record<string,unknown>={}):Promise<void>{
+ const {error}=await getSupabaseClient().from('free_audit_funnel_events').insert({request_id:requestId,event_name:eventName,metadata});if(error)throw new Error('FREE_AUDIT_EVENT_FAILED');
+ if(eventName==='result_opened')await getSupabaseClient().from('free_audit_requests').update({result_opened_at:new Date().toISOString()}).eq('id',requestId).is('result_opened_at',null);
+}
+export async function recordCheckoutStarted(email:string,metadata:Record<string,unknown>):Promise<void>{const {data}=await getSupabaseClient().from('free_audit_requests').select('id').eq('email',email).not('result','is',null).order('created_at',{ascending:false}).limit(1).maybeSingle();if(data?.id)await recordFunnelEvent(String(data.id),'checkout_started',metadata);}
+export async function claimFollowup():Promise<FreeAuditFollowup|null>{const {data,error}=await getSupabaseClient().rpc('claim_free_audit_followup');if(error)throw new Error('FREE_AUDIT_FOLLOWUP_QUEUE_FAILED');return ((data as FreeAuditFollowup[]|null)?.[0])??null;}
+export async function finishFollowup(requestId:string,day:number):Promise<void>{const {data,error}=await getSupabaseClient().rpc('finish_free_audit_followup',{p_request:requestId,p_day:day});if(error||!data)throw new Error('FREE_AUDIT_FOLLOWUP_FINISH_FAILED');}
+export async function failFollowup(requestId:string,day:number):Promise<void>{await getSupabaseClient().rpc('fail_free_audit_followup',{p_request:requestId,p_day:day});}
+export async function unsubscribe(tokenHash:string):Promise<boolean>{const {data,error}=await getSupabaseClient().rpc('unsubscribe_free_audit',{p_token_hash:tokenHash});if(error)throw new Error('FREE_AUDIT_UNSUBSCRIBE_FAILED');return data===true;}
 
 export async function finishRequest(request:FreeAuditRequest,error?:unknown,retryDelivery=false):Promise<void>{
  const failed=Boolean(error);const retryMinutes=Math.min(360,5*Math.pow(3,Math.max(0,request.attempts-1)));
