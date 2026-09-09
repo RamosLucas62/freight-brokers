@@ -107,9 +107,9 @@ export async function finishFollowup(requestId:string,day:number):Promise<void>{
 export async function failFollowup(requestId:string,day:number):Promise<void>{await getSupabaseClient().rpc('fail_free_audit_followup',{p_request:requestId,p_day:day});}
 export async function unsubscribe(tokenHash:string):Promise<boolean>{const {data,error}=await getSupabaseClient().rpc('unsubscribe_free_audit',{p_token_hash:tokenHash});if(error)throw new Error('FREE_AUDIT_UNSUBSCRIBE_FAILED');return data===true;}
 
-export async function finishRequest(request:FreeAuditRequest,error?:unknown,retryDelivery=false):Promise<void>{
+export async function finishRequest(request:FreeAuditRequest,error?:unknown,retryDelivery=false,retryProcessing=false):Promise<void>{
  const failed=Boolean(error);const retryMinutes=Math.min(360,5*Math.pow(3,Math.max(0,request.attempts-1)));
- const update=failed?{status:retryDelivery?'delivery_failed':'failed',last_error:error instanceof Error?error.message.slice(0,200):'FREE_AUDIT_FAILED',next_attempt_at:new Date(Date.now()+retryMinutes*60000).toISOString(),updated_at:new Date().toISOString()}
+ const update=failed?{status:retryDelivery?'delivery_failed':retryProcessing?'queued':'failed',last_error:error instanceof Error?error.message.slice(0,200):'FREE_AUDIT_FAILED',next_attempt_at:new Date(Date.now()+retryMinutes*60000).toISOString(),updated_at:new Date().toISOString()}
   :{status:'completed',last_error:null,completed_at:new Date().toISOString(),updated_at:new Date().toISOString()};
  const {error:dbError}=await getSupabaseClient().from('free_audit_requests').update(update).eq('id',request.id).eq('status','processing');
  if(dbError)throw new Error('FREE_AUDIT_FINISH_FAILED');

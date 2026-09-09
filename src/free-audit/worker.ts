@@ -53,14 +53,15 @@ export async function processFreeAudit(sender:ResendSender,signupUrl:string,publ
   const email=resultEmail(request.contact_name,request.company_name,report,resultUrl.href);
   stage='send_result';await sender.send({idempotencyKey:`free-audit-result-${request.id}`,to:[request.email],...email,attachments:[]});
   stage='finish_request';await repository.finishRequest(request);info('free_audit.worker.completed',{audit_request_id:request.id,duration_ms:Date.now()-started,invoice_count:report.total_invoices_processed,exception_count:report.total_exceptions});return true;
- }catch(error){
-  failure('free_audit.worker.failed',error,{audit_request_id:request.id,stage,duration_ms:Date.now()-started,report_ready:reportReady});
-  if(!reportReady){
-   const kind=failureKind(error);const retryToken=randomBytes(32).toString('base64url');
-   const retryUrl=new URL('/free-audit/retry',publicUrl);retryUrl.searchParams.set('token',retryToken);const notice=failureEmail(request.contact_name,kind,retryUrl.href);
-   try{await repository.issueRetry(request.id,createHash('sha256').update(retryToken).digest('hex'));await sender.send({idempotencyKey:`free-audit-failure-${request.id}-${request.attempts}`,to:[request.email],...notice,attachments:[]});info('free_audit.failure_email.sent',{audit_request_id:request.id,failure_kind:kind});}
-   catch(notificationError){failure('free_audit.failure_email.failed',notificationError,{audit_request_id:request.id,failure_kind:kind});}
-  }
+	 }catch(error){
+	  failure('free_audit.worker.failed',error,{audit_request_id:request.id,stage,duration_ms:Date.now()-started,report_ready:reportReady});
+	  if(!reportReady){
+	   const kind=failureKind(error);const retryAutomatically=kind==='temporary_error'&&request.attempts<5;
+	   if(retryAutomatically){await repository.finishRequest(request,error,false,true);info('free_audit.worker.retry_scheduled',{audit_request_id:request.id,attempt:request.attempts});throw error;}
+	   const retryToken=randomBytes(32).toString('base64url');const retryUrl=new URL('/free-audit/retry',publicUrl);retryUrl.searchParams.set('token',retryToken);const notice=failureEmail(request.contact_name,kind,retryUrl.href);
+	   try{await repository.issueRetry(request.id,createHash('sha256').update(retryToken).digest('hex'));await sender.send({idempotencyKey:`free-audit-failure-${request.id}-${request.attempts}`,to:[request.email],...notice,attachments:[]});info('free_audit.failure_email.sent',{audit_request_id:request.id,failure_kind:kind});}
+	   catch(notificationError){failure('free_audit.failure_email.failed',notificationError,{audit_request_id:request.id,failure_kind:kind});}
+	  }
   await repository.finishRequest(request,error,reportReady);throw error;
  }
  finally{if(dir)await rm(dir,{recursive:true,force:true});}

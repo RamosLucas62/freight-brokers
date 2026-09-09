@@ -24,6 +24,7 @@ describe('free audit worker delivery',()=>{
   expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({html:expect.stringContaining('/free-audit/retry?token=')}));
   expect(mocks.finishRequest).toHaveBeenCalledWith(pending,expect.any(Error),false);
  });
+ it('retries transient processing failures without asking for the same files again',async()=>{const pending={...request,result:null,attempts:1};const transient=new Error('PROVIDER_ERROR');mocks.claimRequest.mockResolvedValue(pending);mocks.loadAttachments.mockRejectedValue(transient);const sender={send:vi.fn()};await expect(processFreeAudit(sender as any,'https://example.com/audit')).rejects.toThrow('PROVIDER_ERROR');expect(sender.send).not.toHaveBeenCalled();expect(mocks.issueRetry).not.toHaveBeenCalled();expect(mocks.finishRequest).toHaveBeenCalledWith(pending,transient,false,true);});
  it('does not replace a report-delivery retry with a failure notice',async()=>{
   mocks.claimRequest.mockResolvedValue(request);const sender={send:vi.fn().mockRejectedValue(new Error('mail offline'))};
   await expect(processFreeAudit(sender as any,'https://example.com/audit')).rejects.toThrow('mail offline');expect(sender.send).toHaveBeenCalledTimes(1);
