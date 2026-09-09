@@ -30,7 +30,7 @@ const Config=z.object({
  STRIPE_PRICE_SCALE_MONTHLY:z.string().startsWith('price_'),STRIPE_PRICE_SCALE_SEMIANNUAL:z.string().startsWith('price_'),STRIPE_PRICE_SCALE_ANNUAL:z.string().startsWith('price_'),
  STRIPE_RETENTION_COUPON_ID:z.string().min(1),STRIPE_PORTAL_CONFIGURATION_ID:z.string().startsWith('bpc_'),
  REDIS_URL:z.string().url(),RATE_LIMIT_KEY_SECRET:z.string().min(32),
- TRUST_PROXY:z.literal('cloudflare'),TURNSTILE_SITE_KEY:z.string().min(10),TURNSTILE_SECRET_KEY:z.string().min(10),
+ TRUST_PROXY:z.enum(['cloudflare','easypanel']),TURNSTILE_SITE_KEY:z.string().min(10),TURNSTILE_SECRET_KEY:z.string().min(10),
  REQUIRE_MFA_SENSITIVE:z.literal('true'),
  PDF_SCAN_URL:z.string().url(),PDF_SCAN_TOKEN:z.string().min(32),
  METRICS_TOKEN:z.string().min(32),

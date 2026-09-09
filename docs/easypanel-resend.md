@@ -78,6 +78,7 @@ RESEND_WEBHOOK_SECRET=SEGREDO_DO_WEBHOOK
 RESEND_FROM_EMAIL=reports@audit.aiolympian.com
 PORTAL_URL=https://portal.audit.aiolympian.com
 WORKER_ENABLED=false
+TRUST_PROXY=easypanel
 ```
 
 `DATABASE_URL` não é usada pelo servidor, e `AUDIT_TENANT_ID` é exclusivo do comando manual. No fluxo de e-mail, a conta vem do destinatário cadastrado. Nenhum tenant padrão é aplicado ao catch-all.
