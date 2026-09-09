@@ -1,4 +1,5 @@
 import {createHmac} from 'node:crypto';
+import {isIP} from 'node:net';
 import Redis from 'ioredis';
 
 export interface RateLimitRule {scope:string;key:string;limit:number;windowSeconds:number;failClosed?:boolean;}
@@ -21,7 +22,16 @@ export function privacyKey(value:string):string {
 export function clientIp(headers:Record<string,string|string[]|undefined>,remote:string|undefined):string {
  if(process.env.TRUST_PROXY==='cloudflare'){
   const forwarded=headers['cf-connecting-ip'];
-  if(typeof forwarded==='string'&&forwarded.length<=64)return forwarded;
+  if(typeof forwarded==='string'&&forwarded.length<=64&&isIP(forwarded.trim()))return forwarded.trim();
+ }
+ if(process.env.TRUST_PROXY==='easypanel'){
+  const forwarded=headers['x-forwarded-for'];
+  if(typeof forwarded==='string'&&forwarded.length<=512){
+   // EasyPanel's Traefik proxy appends the directly connected client to the
+   // right-hand side. Ignore caller-supplied prefixes to prevent bypasses.
+   const nearest=forwarded.split(',').at(-1)?.trim();
+   if(nearest&&nearest.length<=64&&isIP(nearest))return nearest;
+  }
  }
  return remote??'unknown';
 }
