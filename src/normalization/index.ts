@@ -26,3 +26,17 @@ export function normalizeDate(value: string | null): string | null {
   const date = new Date(`${iso}T00:00:00Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === iso ? iso : null;
 }
+
+/**
+ * Produces an exact-comparison key for company names without treating visual
+ * formatting as identity. Legal words remain significant; only accents,
+ * punctuation and spacing are ignored, and "&" is equivalent to "AND".
+ */
+export function normalizeCompanyName(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toUpperCase()
+    .replace(/&/g, 'AND')
+    .replace(/[^A-Z0-9]/g, '');
+}
