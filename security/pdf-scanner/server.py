@@ -1,9 +1,22 @@
-import hashlib, json, os, re, subprocess, tempfile
+import hashlib, json, os, re, subprocess, tempfile, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_BYTES = 20 * 1024 * 1024
 MAX_PAGES = 250
 TOKEN = os.environ.get("PDF_SCAN_TOKEN", "")
+CLAMD_CONFIG = "/app/clamd.conf"
+CLAMD_SOCKET = "/tmp/clamd.sock"
+
+clamd = subprocess.Popen(["clamd",f"--config-file={CLAMD_CONFIG}"],stdout=None,stderr=None)
+for _ in range(300):
+    if clamd.poll() is not None:
+        raise RuntimeError("ClamAV daemon stopped during startup")
+    if os.path.exists(CLAMD_SOCKET):
+        break
+    time.sleep(0.1)
+else:
+    clamd.terminate()
+    raise RuntimeError("ClamAV daemon did not become ready")
 freshclam = subprocess.Popen(["freshclam","--daemon","--foreground=true"],stdout=subprocess.DEVNULL,stderr=subprocess.STDOUT)
 
 def command(args, timeout=12):
@@ -20,6 +33,8 @@ class Handler(BaseHTTPRequestHandler):
         self.connection.settimeout(30)
         if self.path != "/scan" or self.headers.get("Authorization") != "Bearer "+TOKEN or not TOKEN:
             self.reply(404,{"safe":False,"page_count":0,"reason":"not_found"}); return
+        if clamd.poll() is not None or not os.path.exists(CLAMD_SOCKET):
+            self.reply(503,{"safe":False,"page_count":0,"reason":"scanner_unavailable"}); return
         try: length=int(self.headers.get("Content-Length","0"))
         except ValueError: length=0
         if length < 5 or length > MAX_BYTES or self.headers.get_content_type() != "application/pdf":
@@ -30,9 +45,13 @@ class Handler(BaseHTTPRequestHandler):
         with tempfile.TemporaryDirectory(prefix="scan-") as folder:
             path=os.path.join(folder,hashlib.sha256(data).hexdigest()+".pdf")
             with open(path,"xb") as handle: handle.write(data)
-            virus=command(["clamscan","--no-summary",path],18)
+            try:
+                virus=command(["clamdscan",f"--config-file={CLAMD_CONFIG}","--no-summary",path],12)
+            except subprocess.TimeoutExpired:
+                self.reply(503,{"safe":False,"page_count":0,"reason":"scanner_timeout"}); return
             if virus.returncode != 0:
-                self.reply(422,{"safe":False,"page_count":0,"reason":"malware" if virus.returncode==1 else "scanner_error"}); return
+                status=422 if virus.returncode==1 else 503
+                self.reply(status,{"safe":False,"page_count":0,"reason":"malware" if virus.returncode==1 else "scanner_error"}); return
             checked=command(["qpdf","--check","--warning-exit-0",path])
             encrypted=command(["qpdf","--is-encrypted",path])
             if checked.returncode != 0 or encrypted.returncode == 0:

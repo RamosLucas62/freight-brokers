@@ -9,13 +9,17 @@ async function scannerBody(response:Response):Promise<Buffer>{
  return Buffer.concat(chunks);
 }
 function reasonCode(value:string|undefined){return (value??'unsafe').replace(/[^a-z0-9_]+/gi,'_').toUpperCase();}
+function scannerError(value:string|undefined){const reason=reasonCode(value);return reason.startsWith('SCANNER_')?`PDF_${reason}`:`PDF_SCANNER_${reason}`;}
 export async function scanPdf(bytes:Buffer):Promise<{pageCount:number}>{
  const url=process.env.PDF_SCAN_URL;const token=process.env.PDF_SCAN_TOKEN;
  if(!url||!token){if(process.env.NODE_ENV==='production')throw new Error('PDF_SCANNER_REQUIRED');return {pageCount:0};}
  const target=new URL('/scan',url);if(!['http:','https:'].includes(target.protocol))throw new Error('PDF_SCANNER_INVALID');
- const response=await fetch(target,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/pdf','Content-Length':String(bytes.length)},body:new Uint8Array(bytes),signal:AbortSignal.timeout(20000)});
+ let response:Response;
+ try{response=await fetch(target,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/pdf','Content-Length':String(bytes.length)},body:new Uint8Array(bytes),signal:AbortSignal.timeout(20000)});}
+ catch(error){throw new Error(error instanceof Error&&error.name==='TimeoutError'?'PDF_SCANNER_TIMEOUT':'PDF_SCANNER_UNAVAILABLE');}
  let payload:unknown;try{payload=JSON.parse((await scannerBody(response)).toString('utf8'));}catch(error){if(error instanceof SyntaxError)throw new Error(`PDF_SCANNER_HTTP_${response.status||502}`);throw error;}
  const result=Scan.parse(payload);
+ if(response.status>=500)throw new Error(scannerError(result.reason));
  if(!response.ok)throw new Error(`PDF_REJECTED_${reasonCode(result.reason)}`);
  if(!result.safe)throw new Error(`PDF_REJECTED_${result.reason??'UNSAFE'}`);
  return {pageCount:result.page_count};
