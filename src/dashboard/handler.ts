@@ -189,7 +189,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(authError||!user.user){cookie('',0);send(401,{error:'Your session has expired. Request a new sign-in link.'});return true;}
  const serviceDb=getSupabaseClient();
  const role=await serviceDb.from('audit_admins').select('user_id').eq('user_id',user.user.id).maybeSingle();
- const access=await serviceDb.from('audit_portal_users').select('enabled').eq('user_id',user.user.id).maybeSingle();
+ const access=await serviceDb.from('audit_portal_users').select('enabled,guide_completed_at').eq('user_id',user.user.id).maybeSingle();
  if(role.error||access.error)throw new Error('Access lookup failed');
  if(access.data?.enabled===false){cookie('',0);send(401,{error:'Your portal access has been disabled. Contact your account administrator.'});return true;}
  const isAdmin=Boolean(role.data);
@@ -199,6 +199,12 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const customerDb=typeof (userDb as {from?:unknown}).from==='function'?userDb:serviceDb;
  const db=isAdmin?serviceDb:customerDb;
  const aal=verifiedAal(token);
+ if(url.pathname==='/api/portal/guide/complete'&&req.method==='POST'){
+  if(isAdmin){send(403,{error:'The customer guide is not available in administrator mode.'});return true;}
+  if(!(await take({scope:'guide-complete-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true})))return true;
+  const completed=await customerDb.rpc('portal_complete_guide');if(completed.error){send(409,{error:'Unable to save your guide preference. Please try again.'});return true;}
+  send(200,{ok:true,completed_at:completed.data});return true;
+ }
  if(url.pathname.startsWith('/api/portal/mfa/')){
   const refreshName=cookieName('audit_refresh');const refreshRaw=req.headers.cookie?.split(';').map(c=>c.trim()).find(c=>c.startsWith(`${refreshName}=`))?.slice(refreshName.length+1);
   const refreshToken=refreshRaw?decodeURIComponent(refreshRaw):'';
@@ -248,7 +254,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(membership.error)throw membership.error;
  if(url.pathname==='/api/portal/me'&&req.method==='GET'){
   // Administrators browse the paginated company directory, avoiding a truncated global selector.
-  send(200,{email:user.user.email,user_id:user.user.id,is_admin:isAdmin,aal,companies:membership.data?.map(m=>({...m.audit_tenants,role:m.role})).filter(Boolean)});return true;
+  send(200,{email:user.user.email,user_id:user.user.id,is_admin:isAdmin,aal,show_guide:!isAdmin&&!access.data?.guide_completed_at,companies:membership.data?.map(m=>({...m.audit_tenants,role:m.role})).filter(Boolean)});return true;
  }
  const tenant=uuid.parse(url.searchParams.get('company'));
  if(!isAdmin&&!membership.data?.some(m=>m.tenant_id===tenant)){send(403,{error:'You do not have access to this company.'});return true;}

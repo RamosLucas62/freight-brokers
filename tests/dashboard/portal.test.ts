@@ -1,6 +1,6 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {createApp} from '../../src/http/app.js';
-const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),retrieveSubscription:vi.fn(),sendSecurityEmail:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),gte:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
+const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,guideCompletedAt:null as string|null,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),retrieveSubscription:vi.fn(),sendSecurityEmail:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),gte:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
 vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,signInWithOtp:mocks.otp}})}));
 vi.mock('../../src/config/supabase.js',()=>({timedFetch:globalThis.fetch,getSupabaseClient:()=>({from:mocks.from,rpc:mocks.rpc,auth:{admin:{createUser:mocks.createUser,generateLink:mocks.generateLink}}})}));
 vi.mock('../../src/billing/stripe.js',()=>({retrieveCheckoutSession:mocks.retrieveCheckout,retrieveSubscription:mocks.retrieveSubscription,applyRetentionDiscount:vi.fn(),cancelSubscriptionAtPeriodEnd:vi.fn(),createBillingPortalSession:vi.fn(),pauseSubscriptionOneMonth:vi.fn()}));
@@ -8,13 +8,13 @@ vi.mock('../../src/notifications/security.sender.js',()=>({sendSecurityEmail:moc
 const tenant='11111111-1111-4111-8111-111111111111';const other='22222222-2222-4222-8222-222222222222';
 let server:ReturnType<typeof createApp>,base:string;
 beforeEach(async()=>{
- vi.resetAllMocks();mocks.isAdmin=false;mocks.enabled=true;vi.stubEnv('PORTAL_URL','https://portal.example.com');vi.stubEnv('SUPABASE_ANON_KEY','public-key');vi.stubEnv('SUPABASE_URL','https://example.supabase.co');
+ vi.resetAllMocks();mocks.isAdmin=false;mocks.enabled=true;mocks.guideCompletedAt=null;vi.stubEnv('PORTAL_URL','https://portal.example.com');vi.stubEnv('SUPABASE_ANON_KEY','public-key');vi.stubEnv('SUPABASE_URL','https://example.supabase.co');
  mocks.getUser.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'}},error:null});
  mocks.retrieveSubscription.mockResolvedValue({id:'sub_1',status:'active',customer:'cus_1',trial_end:null});
  mocks.otp.mockResolvedValue({error:null});mocks.rpc.mockResolvedValue({error:null});
  mocks.generateLink.mockResolvedValue({data:{properties:{action_link:'https://example.supabase.co/auth/v1/verify?token=private'}},error:null});
  mocks.sendSecurityEmail.mockResolvedValue(undefined);
- mocks.from.mockImplementation(table=>['audit_admins','audit_portal_users'].includes(table)?{select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:table==='audit_admins'?(mocks.isAdmin?{user_id:'user-1'}:null):{enabled:mocks.enabled},error:null})})})}:table==='audit_memberships'?{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,role:'owner',audit_tenants:{id:tenant,name:'Company',alias:'company'}}],error:null})})}:mocks.query);
+ mocks.from.mockImplementation(table=>['audit_admins','audit_portal_users'].includes(table)?{select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:table==='audit_admins'?(mocks.isAdmin?{user_id:'user-1'}:null):{enabled:mocks.enabled,guide_completed_at:mocks.guideCompletedAt},error:null})})})}:table==='audit_memberships'?{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,role:'owner',audit_tenants:{id:tenant,name:'Company',alias:'company'}}],error:null})})}:mocks.query);
  mocks.query.select.mockReturnValue(mocks.query);mocks.query.eq.mockReturnValue(mocks.query);mocks.query.gte.mockResolvedValue({data:[],count:0,error:null});mocks.query.order.mockReturnValue(mocks.query);mocks.query.range.mockResolvedValue({data:[],count:0,error:null});
  mocks.query.maybeSingle.mockResolvedValue({data:null,error:null});
  server=createApp({secret:'whsec_'+Buffer.from('test-secret-32-bytes-long-12345678').toString('base64'),enqueue:async()=>{},ready:async()=>true});
@@ -22,10 +22,13 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{vi.unstubAllEnvs();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
 const headers={'Content-Type':'application/json',Origin:'https://portal.example.com',Cookie:'audit_session=valid-token'};
-it('serves accessible static login with restrictive CSP',async()=>{const r=await fetch(base+'/');expect(r.status).toBe(200);expect(r.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");expect(await r.text()).toContain('type="email"');});
+it('serves accessible static login and a re-openable product guide with restrictive CSP',async()=>{const r=await fetch(base+'/');expect(r.status).toBe(200);expect(r.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");const html=await r.text();expect(html).toContain('type="email"');expect(html).toContain('id="product-guide"');expect(html).toContain('id="open-guide"');});
 it('serves a dedicated post-onboarding thank-you page',async()=>{const r=await fetch(base+'/onboarding/thanks');expect(r.status).toBe(200);const html=await r.text();expect(html).toContain('Thank you.');expect(html).toContain('Check your inbox.');});
 it('rejects requests without a session before reading customer data',async()=>{const r=await fetch(base+'/api/portal/jobs?company='+tenant);expect(r.status).toBe(401);expect(mocks.from).not.toHaveBeenCalled();});
 it('rejects expired sessions',async()=>{mocks.getUser.mockResolvedValue({data:{user:null},error:{}});const r=await fetch(base+'/api/portal/me',{headers});expect(r.status).toBe(401);expect(mocks.from).not.toHaveBeenCalled();});
+it('shows the guide on first login and hides it after completion',async()=>{let r=await fetch(base+'/api/portal/me',{headers});expect(r.status).toBe(200);expect(await r.json()).toMatchObject({show_guide:true});mocks.guideCompletedAt='2026-09-10T12:00:00.000Z';r=await fetch(base+'/api/portal/me',{headers});expect(await r.json()).toMatchObject({show_guide:false});});
+it('records guide completion for the authenticated customer',async()=>{mocks.rpc.mockResolvedValue({data:'2026-09-10T12:00:00.000Z',error:null});const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(200);expect(await r.json()).toMatchObject({ok:true});expect(mocks.rpc).toHaveBeenCalledWith('portal_complete_guide');});
+it('does not expose the customer guide action in administrator mode',async()=>{mocks.isAdmin=true;const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_complete_guide');});
 it('rejects cross-company reads',async()=>{const r=await fetch(base+'/api/portal/invoices?company='+other,{headers});expect(r.status).toBe(403);expect(mocks.from).not.toHaveBeenCalledWith('invoices');});
 it('scopes and paginates every supported collection',async()=>{for(const collection of ['jobs','invoices','reports','exceptions','history']){const r=await fetch(base+`/api/portal/${collection}?company=${tenant}&page=2`,{headers});expect(r.status).toBe(200);expect(mocks.query.eq).toHaveBeenLastCalledWith('tenant_id',tenant);expect(mocks.query.range).toHaveBeenLastCalledWith(100,149);}});
 it('rejects cross-origin mutation',async()=>{const r=await fetch(base+'/api/portal/login',{method:'POST',headers:{...headers,Origin:'https://evil.example.com'},body:JSON.stringify({email:'client@example.com'})});expect(r.status).toBe(403);expect(mocks.otp).not.toHaveBeenCalled();});
