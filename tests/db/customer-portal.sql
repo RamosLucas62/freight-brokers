@@ -1,10 +1,14 @@
 -- Run after tenant-isolation.sql in the --check transaction; never persists.
 INSERT INTO public.audit_inbound_jobs(id,tenant_id,email_id,status) VALUES
- ('50000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',gen_random_uuid(),'needs_review');
+ ('50000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001',gen_random_uuid(),'needs_review'),
+ ('50000000-0000-4000-8000-000000000009','10000000-0000-4000-8000-000000000002',gen_random_uuid(),'completed');
 INSERT INTO public.audit_billing_customers(tenant_id,billing_email,plan_code,included_invoices,overage_unit_amount_cents)
  VALUES('10000000-0000-4000-8000-000000000001','owner@example.com','growth',1500,50);
+SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',true);
 SET LOCAL ROLE authenticated;
 DO $$ BEGIN
+ IF (SELECT count(*) FROM public.audit_inbound_jobs) <> 1 THEN RAISE EXCEPTION 'Portal queue tenant isolation failed'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.audit_inbound_jobs WHERE id='50000000-0000-4000-8000-000000000001') THEN RAISE EXCEPTION 'Own portal queue is not readable'; END IF;
  BEGIN
  PERFORM public.portal_job_action('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','50000000-0000-4000-8000-000000000001','retry','Reviewed document');
  RAISE EXCEPTION 'Direct customer mutation allowed';
