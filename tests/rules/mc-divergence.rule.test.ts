@@ -39,6 +39,22 @@ describe('MC_DIVERGENCE rule', () => {
     expect(result).toHaveLength(0);
   });
 
+  it.each([
+    ['R&S; MOBILE LOGISTICS LLC', 'R&S MOBILE LOGISTICS LLC'],
+    ['R & S MOBILE LOGISTICS, L.L.C.', 'R AND S MOBILE LOGISTICS LLC'],
+    ['Transportes São José, Inc.', 'TRANSPORTES SAO JOSE INC'],
+  ])('ignores non-semantic formatting differences: %s', async (invoiceName, legalName) => {
+    const inv = makeInvoice({ carrier_name: invoiceName, mc_number: '1498476' });
+    const result = await mcDivergenceRule.evaluate([inv], makeGetCarrier({ legal_name: legalName }), ctx);
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not weaken a real legal-name divergence after normalization', async () => {
+    const inv = makeInvoice({ carrier_name: 'R&S MOBILE LOGISTICS LLC', mc_number: '1498476' });
+    const result = await mcDivergenceRule.evaluate([inv], makeGetCarrier({ legal_name: 'R&S FREIGHT SERVICES LLC' }), ctx);
+    expect(result).toHaveLength(1);
+  });
+
   it('skips invoices without mc_number', async () => {
     const inv = makeInvoice({ mc_number: null, carrier_name: 'SOME CARRIER' });
     const getCarrier = makeGetCarrier({ legal_name: 'DIFFERENT NAME' });

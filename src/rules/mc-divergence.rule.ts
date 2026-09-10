@@ -1,6 +1,7 @@
 import type { IRule, RuleException, GetCarrierFn } from '../types/rule.types.js';
 import type { InvoiceRecord } from '../types/invoice.types.js';
 import type { AuditContext } from '../types/carrier.types.js';
+import { normalizeCompanyName } from '../normalization/index.js';
 
 export const mcDivergenceRule: IRule = {
   name: 'MC_DIVERGENCE',
@@ -27,8 +28,11 @@ export const mcDivergenceRule: IRule = {
 
       if (!carrierData.legal_name) continue;
 
-      const fmcsaName   = carrierData.legal_name.trim().toUpperCase();
-      const invoiceName = inv.carrier_name.trim().toUpperCase();
+      const fmcsaName = normalizeCompanyName(carrierData.legal_name);
+      const invoiceName = normalizeCompanyName(inv.carrier_name);
+
+      // A punctuation-only extraction is uncertainty, not evidence of a mismatch.
+      if (!fmcsaName || !invoiceName) continue;
 
       if (fmcsaName !== invoiceName) {
         exceptions.push({
