@@ -19,4 +19,8 @@ describe('Stripe webhook persistence',()=>{
   await processStripeEvent({id:'evt_4',type:'customer.subscription.updated',created:124,data:{object:{id:'sub_4',status:'active',items:{data:[{price:{id:'price_growth_year'}}]}}}});
   expect(rpc).toHaveBeenLastCalledWith('sync_billing_plan_from_stripe',{p_subscription_id:'sub_4',p_plan:'growth',p_period:'annual'});
  });
+ it('maps Payment Link subscriptions using their Stripe amount and cadence',async()=>{
+  await processStripeEvent({id:'evt_5',type:'customer.subscription.updated',created:125,data:{object:{id:'sub_5',status:'trialing',items:{data:[{price:{id:'price_unknown',unit_amount:808200,currency:'usd',recurring:{interval:'month',interval_count:6}}}]}}}});
+  expect(rpc).toHaveBeenLastCalledWith('sync_billing_plan_from_stripe',{p_subscription_id:'sub_5',p_plan:'scale',p_period:'semiannual'});
+ });
 });
