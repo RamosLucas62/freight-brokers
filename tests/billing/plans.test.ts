@@ -33,4 +33,14 @@ describe('three-tier billing catalog',()=>{
   vi.stubEnv('STRIPE_PRICE_SCALE_SEMIANNUAL','price_scale_six_months');
   expect(selectionFromSubscription({items:{data:[{price:{id:'price_scale_six_months'}}]},metadata:{plan_code:'core',billing_period:'monthly'}})).toEqual({plan:'scale',period:'semiannual'});
  });
+
+ it('recognizes a Payment Link subscription even when price IDs and metadata are not configured',()=>{
+  expect(selectionFromSubscription({items:{data:[{price:{id:'price_from_payment_link',unit_amount:808200,currency:'usd',recurring:{interval:'month',interval_count:6}}}]}})).toEqual({plan:'scale',period:'semiannual'});
+  expect(selectionFromSubscription({items:{data:[{price:{id:'price_scheduled',unit_amount:997000,currency:'usd',recurring:{interval:'year',interval_count:1}}}]}})).toEqual({plan:'growth',period:'annual'});
+ });
+
+ it('does not infer a catalog plan from an unsupported currency or billing cadence',()=>{
+  expect(selectionFromSubscription({items:{data:[{price:{unit_amount:808200,currency:'eur',recurring:{interval:'month',interval_count:6}}}]}})).toBeNull();
+  expect(selectionFromSubscription({items:{data:[{price:{unit_amount:808200,currency:'usd',recurring:{interval:'month',interval_count:3}}}]}})).toBeNull();
+ });
 });

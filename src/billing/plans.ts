@@ -48,10 +48,23 @@ export function selectionFromPriceId(value:unknown):{plan:PlanCode;period:Billin
  return null;
 }
 
+function selectionFromPriceDetails(value:unknown):{plan:PlanCode;period:BillingPeriod}|null{
+ if(!value||typeof value!=='object')return null;
+ const price=value as {unit_amount?:unknown;currency?:unknown;recurring?:{interval?:unknown;interval_count?:unknown}};
+ if(price.currency!=='usd'||typeof price.unit_amount!=='number')return null;
+ const interval=price.recurring?.interval,intervalCount=price.recurring?.interval_count;
+ const period:BillingPeriod|null=interval==='month'&&intervalCount===1?'monthly':interval==='month'&&intervalCount===6?'semiannual':interval==='year'&&intervalCount===1?'annual':null;
+ if(!period)return null;
+ for(const plan of ['core','growth','scale'] as const)if(prices[plan][period].amount===price.unit_amount)return {plan,period};
+ return null;
+}
+
 export function selectionFromSubscription(value:unknown):{plan:PlanCode;period:BillingPeriod}|null{
  if(!value||typeof value!=='object')return null;
- const subscription=value as {metadata?:Record<string,unknown>;items?:{data?:Array<{price?:{id?:unknown}}>} };
- const fromPrice=selectionFromPriceId(subscription.items?.data?.[0]?.price?.id);if(fromPrice)return fromPrice;
+ const subscription=value as {metadata?:Record<string,unknown>;items?:{data?:Array<{price?:unknown}>} };
+ const price=subscription.items?.data?.[0]?.price;
+ const priceId=price&&typeof price==='object'?(price as {id?:unknown}).id:undefined;
+ const fromPrice=selectionFromPriceId(priceId)??selectionFromPriceDetails(price);if(fromPrice)return fromPrice;
  const plan=subscription.metadata?.plan_code,period=subscription.metadata?.billing_period;
  return (plan==='core'||plan==='growth'||plan==='scale')&&(period==='monthly'||period==='semiannual'||period==='annual')?{plan,period}:null;
 }
