@@ -19,19 +19,56 @@ async function api(path,options={}){
  if(!response.ok){if(response.status===401){$('portal').hidden=true;$('login').hidden=false;$('login-message').textContent=data.error;}throw new Error(data.error||'Unable to load data.');}return data;
 }
 function message(text){$('message').textContent=text;$('message').hidden=!text;}
+let onboardingRecipients=[],onboardingMaxRecipients=3,onboardingCompleted=false;
+function onboardingFeedback(kind,title,text){
+ const dialog=$('onboarding-feedback');dialog.dataset.kind=kind;$('onboarding-feedback-title').textContent=title;$('onboarding-feedback-text').textContent=text;
+ if(!dialog.open)dialog.showModal();
+}
+function renderOnboardingRecipients(){
+ const list=$('recipient-tags');if(!list)return;list.replaceChildren();
+ onboardingRecipients.forEach(email=>{const chip=document.createElement('span');chip.className='recipient-chip';chip.textContent=email;const remove=document.createElement('button');remove.type='button';remove.setAttribute('aria-label',`Remove ${email}`);remove.textContent='×';remove.addEventListener('click',()=>{onboardingRecipients=onboardingRecipients.filter(value=>value!==email);renderOnboardingRecipients();});chip.append(remove);list.append(chip);});
+ const limit=onboardingMaxRecipients>=500?'500 technical limit':String(onboardingMaxRecipients);$('recipient-count').textContent=`${onboardingRecipients.length} / ${limit}`;
+ $('recipient-input').disabled=onboardingRecipients.length>=onboardingMaxRecipients;
+}
+function addOnboardingRecipient(raw,announce=true){
+ const input=$('recipient-input');const email=raw.trim().toLowerCase();if(!email)return true;
+ input.value=email;input.setCustomValidity('');
+ if(!input.checkValidity()){if(announce)input.reportValidity();return false;}
+ if(onboardingRecipients.includes(email)){input.value='';return true;}
+ if(onboardingRecipients.length>=onboardingMaxRecipients){input.setCustomValidity(`Your plan allows up to ${onboardingMaxRecipients} report recipients.`);if(announce)input.reportValidity();return false;}
+ onboardingRecipients.push(email);input.value='';renderOnboardingRecipients();return true;
+}
+function populateTimezones(){
+ const select=$('timezone');const detected=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
+ const zones=['UTC',...(typeof Intl.supportedValuesOf==='function'?Intl.supportedValuesOf('timeZone'):['America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Sao_Paulo','Europe/London','Europe/Paris','Asia/Dubai','Asia/Singapore','Asia/Tokyo','Australia/Sydney'])];
+ const groups=new Map();zones.forEach(zone=>{const region=zone.includes('/')?zone.split('/')[0]:'Universal';if(!groups.has(region))groups.set(region,[]);groups.get(region).push(zone);});
+ select.replaceChildren();groups.forEach((values,region)=>{const group=document.createElement('optgroup');group.label=region;values.forEach(zone=>{const option=document.createElement('option');option.value=zone;option.textContent=zone.replaceAll('_',' ');group.append(option);});select.append(group);});
+ select.value=zones.includes(detected)?detected:'UTC';
+}
+function configureOnboardingForm(){
+ const form=$('onboarding-form');form.innerHTML=`<label for="company-name">Company name</label><input id="company-name" required minlength="2" maxlength="200" placeholder="Acme Logistics"><label for="onboarding-email">Portal access email</label><input id="onboarding-email" type="email" autocomplete="email" required placeholder="you@company.com"><div class="recipient-label"><label for="recipient-input">Report recipients</label><span id="recipient-count">0 / 3</span></div><div class="recipient-picker"><div id="recipient-tags" class="recipient-tags"></div><input id="recipient-input" type="email" autocomplete="off" placeholder="Type an email and press Enter" aria-describedby="recipient-help"></div><small id="recipient-help" class="field-help">Press Enter after each address. New recipients confirm ownership before receiving reports.</small><label for="timezone">Company time zone</label><select id="timezone" required aria-describedby="timezone-help"></select><small id="timezone-help" class="field-help">Reports arrive at 7:00 AM in this time zone.</small><button class="primary" type="submit" disabled>Create account <span>→</span></button>`;
+ if(!$('onboarding-feedback')){const dialog=document.createElement('dialog');dialog.id='onboarding-feedback';dialog.setAttribute('aria-labelledby','onboarding-feedback-title');dialog.innerHTML='<div class="feedback-mark" aria-hidden="true">✓</div><p class="eyebrow">ACCOUNT SETUP</p><h2 id="onboarding-feedback-title"></h2><p id="onboarding-feedback-text" class="muted"></p><button id="close-onboarding-feedback" class="primary" type="button">Got it</button>';document.body.append(dialog);$('close-onboarding-feedback').addEventListener('click',()=>dialog.close());}
+ populateTimezones();
+ $('recipient-input').addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===','||event.key===';'){event.preventDefault();addOnboardingRecipient(event.currentTarget.value);}});
+ $('recipient-input').addEventListener('paste',event=>{const values=event.clipboardData?.getData('text').split(/[;,\n]/).map(value=>value.trim()).filter(Boolean)??[];if(values.length>1){event.preventDefault();values.forEach(value=>addOnboardingRecipient(value,false));renderOnboardingRecipients();}});
+}
 $('login-form').addEventListener('submit',async event=>{
  event.preventDefault();const button=event.submitter;button.disabled=true;$('login-message').textContent='Requesting your sign-in link…';
  try{await api('login',{method:'POST',body:JSON.stringify({email:$('email').value.trim(),turnstile_token:turnstileToken('login')})});$('login-message').textContent='If this email is registered, you will receive a sign-in link. Please also check your spam folder.';}
  catch(error){$('login-message').textContent=error.message;}finally{if(globalThis.turnstile&&turnstileWidgets.login!=null)turnstile.reset(turnstileWidgets.login);button.disabled=false;}
 });
 $('onboarding-form').addEventListener('submit',async event=>{
- event.preventDefault();const params=new URLSearchParams(location.search);const button=event.submitter;button.disabled=true;$('onboarding-message').textContent='Creating your account…';
+ event.preventDefault();const params=new URLSearchParams(location.search);const button=event.submitter;
+ if($('recipient-input').value.trim()&&!addOnboardingRecipient($('recipient-input').value))return;
+ const owner=$('onboarding-email').value.trim().toLowerCase();if(owner&&!onboardingRecipients.includes(owner)){if(!addOnboardingRecipient(owner))return;}
+ if(!onboardingRecipients.length){$('recipient-input').setCustomValidity('Add at least one report recipient.');$('recipient-input').reportValidity();return;}
+ button.disabled=true;button.firstChild.textContent='Creating account ';$('onboarding-message').textContent='Creating your account…';
  try{
-  const reportEmails=$('report-emails').value.split(/[;,\n]/).map(value=>value.trim()).filter(Boolean);
-  await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:$('onboarding-email').value.trim(),timezone:$('timezone').value.trim(),report_emails:reportEmails})});
-  location.assign('/onboarding/thanks');
+  await api('onboarding',{method:'POST',body:JSON.stringify({session_id:params.get('session_id'),company_name:$('company-name').value.trim(),email:owner,timezone:$('timezone').value,report_emails:onboardingRecipients})});
+  onboardingCompleted=true;button.firstChild.textContent='Account created ';$('onboarding-message').textContent='Account created. Access email sent.';
+  onboardingFeedback('success','Your account is ready.',`We sent a secure access email to ${owner}. Open it and select “Access the platform” to enter your account.`);
  }
- catch(error){$('onboarding-message').textContent=error.message;}finally{button.disabled=false;}
+ catch(error){$('onboarding-message').textContent=error.message;onboardingFeedback('error','We could not create your account.',error.message);}finally{if(!onboardingCompleted){button.disabled=false;button.firstChild.textContent='Create account ';}}
 });
 async function initialize(){
  try{
@@ -41,7 +78,13 @@ async function initialize(){
   const token=new URLSearchParams(location.search).get('token');if(!token)throw new Error('This confirmation link is invalid.');
   const result=await api('recipient/confirm',{method:'POST',body:JSON.stringify({token})});history.replaceState(null,'','/');$('login-message').textContent=`${result.email} is confirmed and can now receive reports.`;return;
  }
- if(location.pathname==='/onboarding'){$('signin-panel').hidden=true;$('onboarding-panel').hidden=false;$('timezone').value=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';$('onboarding-email').addEventListener('input',()=>{if(!$('report-emails').value.trim())$('report-emails').value=$('onboarding-email').value.trim();});return;}
+ if(location.pathname==='/onboarding'){
+  $('signin-panel').hidden=true;$('onboarding-panel').hidden=false;configureOnboardingForm();
+  const sessionId=new URLSearchParams(location.search).get('session_id');if(!sessionId){onboardingFeedback('error','This setup link is incomplete.','Open the newest setup email from Olympian and use its button.');return;}
+  try{const context=await api(`onboarding/context?session_id=${encodeURIComponent(sessionId)}`);onboardingMaxRecipients=context.max_recipients;$('recipient-help').textContent=context.max_recipients>=500?`${context.plan_name} supports multiple recipients (500-address technical safety limit). Press Enter after each address.`:`${context.plan_name} includes up to ${context.max_recipients} recipients. Press Enter after each address.`;if(context.email){$('onboarding-email').value=context.email;$('onboarding-email').readOnly=true;addOnboardingRecipient(context.email,false);}renderOnboardingRecipients();$('onboarding-form').querySelector('button[type="submit"]').disabled=false;}
+  catch(error){onboardingFeedback('error','We could not verify this setup link.',error.message);}
+  return;
+ }
  const hash=new URLSearchParams(location.hash.slice(1));
  if(hash.has('error_description')){history.replaceState(null,'','/');throw new Error('This link has expired or has already been used. Request a new link.');}
  if(hash.has('access_token')){const access_token=hash.get('access_token'),refresh_token=hash.get('refresh_token');history.replaceState(null,'','/');await api('session',{method:'POST',body:JSON.stringify({access_token,...(refresh_token?{refresh_token}:{})})});}
