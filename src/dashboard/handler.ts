@@ -12,7 +12,7 @@ import {verifyTurnstile} from '../security/turnstile.js';
 import {readBody,securityHeaders,HttpError} from '../security/http.js';
 import {createHash,createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 import {sendSecurityEmail} from '../notifications/security.sender.js';
-import {plans,planFromMetadata,periodFromMetadata} from '../billing/plans.js';
+import {plans,planFromMetadata,periodFromMetadata,selectionFromSubscription} from '../billing/plans.js';
 import {failure,requestId} from '../observability/logger.js';
 
 const uuid=z.string().uuid();
@@ -50,7 +50,8 @@ async function onboardingSubscription(sessionId:string){
  const customerMatches=Boolean(subscription)&&subscription?.id===subscriptionId&&stripeId(subscription?.customer)===customerId;
  const validTrial=customerMatches&&subscription?.status==='trialing'&&Number(subscription.trial_end)>Date.now()/1000;
  const paidAndActive=customerMatches&&checkout.payment_status==='paid'&&subscription?.status==='active';
- return {checkout,subscription,subscriptionId,customerId,checkoutComplete,validTrial,paidAndActive};
+ const selection=selectionFromSubscription(subscription)??{plan:planFromMetadata(checkout.metadata?.plan_code),period:periodFromMetadata(checkout.metadata?.billing_period)};
+ return {checkout,subscription,subscriptionId,customerId,checkoutComplete,validTrial,paidAndActive,selection};
 }
 async function sendWelcomeEmail(input:{email:string;company:string;plan:string;accessUrl:string;sessionId:string;trialEndsAt?:Date}){
  const button='display:inline-block;background:#f4512c;color:#fff;text-decoration:none;font-weight:700;padding:14px 22px;border:2px solid #111;border-radius:6px;box-shadow:4px 4px 0 #111';
@@ -76,7 +77,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const publicKey=process.env.SUPABASE_ANON_KEY;
  if(!origin||!publicKey){send(503,{error:'Portal access is still being configured. Contact your account administrator.'});return true;}
  if(req.method==='POST'&&(req.headers.origin!==new URL(origin).origin||req.headers['content-type']?.split(';',1)[0].trim().toLowerCase()!=='application/json')){send(403,{error:'Invalid request origin.'});return true;}
- if(url.pathname==='/api/portal/security-config'&&req.method==='GET'){send(200,{turnstile_site_key:process.env.TURNSTILE_SITE_KEY??null,mfa_required:process.env.REQUIRE_MFA_SENSITIVE==='true'});return true;}
+ if(url.pathname==='/api/portal/security-config'&&req.method==='GET'){send(200,{turnstile_site_key:process.env.TURNSTILE_SITE_KEY??null,mfa_required:false});return true;}
  const ip=clientIp(req.headers,req.socket.remoteAddress);
  const take=async(rule:Omit<RateLimitRule,'key'>&{key?:string})=>{
   const result=await limiter.consume({...rule,key:rule.key??ip});
@@ -91,7 +92,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   const state=await onboardingSubscription(sessionId);
   if(!state.checkoutComplete){send(402,{error:'Checkout is not complete yet.'});return true;}
   if(!state.paidAndActive&&!state.validTrial){send(402,{error:'We could not confirm this subscription. Please use the newest setup email or contact support.'});return true;}
-  const selectedPlan=planFromMetadata(state.checkout.metadata?.plan_code);
+  const selectedPlan=state.selection.plan;
   send(200,{email:state.checkout.customer_details?.email??null,plan_code:selectedPlan,plan_name:plans[selectedPlan].name,max_recipients:plans[selectedPlan].maxRecipients,trialing:state.validTrial});return true;
  }
  if(url.pathname==='/api/portal/recipient/confirm'&&req.method==='POST'){
@@ -126,7 +127,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(!state.checkoutComplete){send(402,{error:'Checkout is not complete yet.'});return true;}
  if(!paidAndActive&&!validTrial){send(402,{error:'We could not confirm this subscription. Please use the newest setup email or contact support.'});return true;}
  const billingStatus=validTrial?'trialing':'active';const trialEndsAt=validTrial?new Date(Number(subscription!.trial_end)*1000):undefined;
- const selectedPlan=planFromMetadata(checkout.metadata?.plan_code);const selectedPeriod=periodFromMetadata(checkout.metadata?.billing_period);
+ const selectedPlan=state.selection.plan;const selectedPeriod=state.selection.period;
  const email=input.email.toLowerCase();
  if(checkout.customer_details?.email?.toLowerCase()!==email){send(403,{error:'Use the same email address used during checkout.'});return true;}
  const requested=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];if(!requested.includes(email))requested.unshift(email);
@@ -198,7 +199,6 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const customerDb=typeof (userDb as {from?:unknown}).from==='function'?userDb:serviceDb;
  const db=isAdmin?serviceDb:customerDb;
  const aal=verifiedAal(token);
- const requireMfa=()=>{if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Multi-factor authentication is required for this action.'});return false;}return true;};
  if(url.pathname.startsWith('/api/portal/mfa/')){
   const refreshName=cookieName('audit_refresh');const refreshRaw=req.headers.cookie?.split(';').map(c=>c.trim()).find(c=>c.startsWith(`${refreshName}=`))?.slice(refreshName.length+1);
   const refreshToken=refreshRaw?decodeURIComponent(refreshRaw):'';
@@ -226,7 +226,6 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  }
  if(url.pathname.startsWith('/api/portal/admin/')){
   if(!isAdmin){send(403,{error:'Administrator access required.'});return true;}
-  if(req.method!=='GET'&&!requireMfa())return true;
   if(req.method!=='GET'&&!(await take({scope:'admin-mutation-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true})))return true;
   const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);
   if(url.pathname==='/api/portal/admin/action'&&req.method==='POST'){
@@ -245,7 +244,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   }
   send(404,{error:'Page not found.'});return true;
  }
- const membership=await db.from('audit_memberships').select('tenant_id,role,audit_tenants(id,name,status)').eq('user_id',user.user.id);
+ const membership=await db.from('audit_memberships').select('tenant_id,role,audit_tenants(id,name,alias,status)').eq('user_id',user.user.id);
  if(membership.error)throw membership.error;
  if(url.pathname==='/api/portal/me'&&req.method==='GET'){
   // Administrators browse the paginated company directory, avoiding a truncated global selector.
@@ -259,21 +258,27 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   const [settings,contacts,billing,senders,usage]=await Promise.all([
    db.from('audit_notification_settings').select('timezone,daily_hour,daily_enabled,monthly_enabled,immediate_enabled,immediate_threshold').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_report_contacts').select('email,verified_at').eq('tenant_id',tenant).eq('enabled',true).order('email'),
-   db.from('audit_billing_customers').select('billing_email,status,trial_ends_at,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
+   db.from('audit_billing_customers').select('billing_email,stripe_subscription_id,status,trial_ends_at,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_inbound_sender_rules').select('sender_email').eq('tenant_id',tenant).eq('enabled',true).order('sender_email'),
    db.from('audit_invoice_usage').select('id',{count:'exact',head:true}).eq('tenant_id',tenant).gte('created_at',monthStart.toISOString()),
   ]);
   if(settings.error||contacts.error||billing.error||senders.error||usage.error)throw new Error('Settings lookup failed');
-  const bill=billing.data;
+  let bill=billing.data;
+  if(bill?.stripe_subscription_id){
+   try{const liveSelection=selectionFromSubscription(await retrieveSubscription(bill.stripe_subscription_id));if(liveSelection&&(liveSelection.plan!==bill.plan_code||liveSelection.period!==bill.billing_period)){
+    const synced=await serviceDb.rpc('sync_billing_plan_from_stripe',{p_subscription_id:bill.stripe_subscription_id,p_plan:liveSelection.plan,p_period:liveSelection.period});if(synced.error)throw synced.error;
+    const catalog=plans[liveSelection.plan];bill={...bill,plan_code:liveSelection.plan,billing_period:liveSelection.period,included_invoices:catalog.includedInvoices,overage_unit_amount_cents:catalog.overageCents};
+   }}catch(error){failure('portal.settings.billing_reconciliation_failed',error,{request_id:requestId(req),tenant});}
+  }
   const tenantRole=membership.data?.find(m=>m.tenant_id===tenant)?.role;
-  send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
+  const tenantDetails=membership.data?.find(m=>m.tenant_id===tenant)?.audit_tenants as {alias?:string}|undefined;const plan=plans[planFromMetadata(bill?.plan_code)];
+  send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),audit_email:tenantDetails?.alias?`${tenantDetails.alias}@audit.aiolympian.com`:null,max_recipients:plan.maxRecipients,max_senders:plan.maxSenders,report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
    billing:bill?{status:bill.status,trial_ends_at:bill.trial_ends_at,paused_until:bill.paused_until,payment_grace_until:bill.payment_grace_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
     plan_code:bill.plan_code,billing_period:bill.billing_period,included_invoices:bill.included_invoices,overage_unit_amount_cents:bill.overage_unit_amount_cents,usage_count:usage.count??0,
     deletion_scheduled_at:bill.deletion_scheduled_at,can_manage:!isAdmin&&bill.billing_email===user.user.email?.toLowerCase(),
     discount_available:!bill.retention_discount_used_at,pause_available:!bill.pause_used_at||new Date(bill.pause_used_at).getTime()<Date.now()-365*86400000}:null});return true;
  }
  if(url.pathname==='/api/portal/settings/notifications'&&req.method==='POST'){
-  if(!requireMfa())return true;
   if(!(await take({scope:'settings-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true}))||!(await take({scope:'settings-tenant',key:tenant,limit:10,windowSeconds:600,failClosed:true})))return true;
   const input=z.object({timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(500),inbound_senders:z.array(z.string().email().max(254)).min(1).max(500)}).parse(await body(req));
   const planRow=await serviceDb.from('audit_billing_customers').select('plan_code').eq('tenant_id',tenant).maybeSingle();if(planRow.error)throw planRow.error;
@@ -289,7 +294,6 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  }
  const billingAction=url.pathname.match(/^\/api\/portal\/billing\/(portal|retention-discount|pause|cancel)$/);
  if(billingAction&&req.method==='POST'){
-  if(!requireMfa())return true;
   if(!(await take({scope:'billing-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true}))||!(await take({scope:'billing-tenant',key:tenant,limit:10,windowSeconds:600,failClosed:true})))return true;
   if(isAdmin){send(403,{error:'Only the customer billing owner can change the subscription.'});return true;}
   const found=await db.from('audit_billing_customers').select('billing_email,stripe_customer_id,stripe_subscription_id,status,retention_discount_used_at,pause_used_at').eq('tenant_id',tenant).maybeSingle();

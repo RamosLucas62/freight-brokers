@@ -5,7 +5,7 @@ import {paymentLink,type BillingPeriod,type PlanCode} from './plans.js';
 
 type StripeReference=string|{id?:string}|null;
 export type StripeCheckoutSession={id:string;url?:string|null;payment_status?:string;status?:string;customer?:StripeReference;subscription?:StripeReference;customer_details?:{email?:string|null};metadata?:Record<string,string>} ;
-export type StripeSubscription={id:string;status?:string;customer?:StripeReference;trial_end?:number|null};
+export type StripeSubscription={id:string;status?:string;customer?:StripeReference;trial_end?:number|null;metadata?:Record<string,string>;items?:{data?:Array<{price?:{id?:string}}>} };
 
 function config(){
  const secret=process.env.STRIPE_SECRET_KEY;

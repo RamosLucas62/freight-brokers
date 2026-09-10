@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {paymentLink,paymentLinks,planFromMetadata,plans,prices,selectionFromPriceId} from '../../src/billing/plans.js';
+import {paymentLink,paymentLinks,planFromMetadata,plans,prices,selectionFromPriceId,selectionFromSubscription} from '../../src/billing/plans.js';
 
 afterEach(()=>vi.unstubAllEnvs());
 
@@ -27,5 +27,10 @@ describe('three-tier billing catalog',()=>{
  it('maps a Growth Stripe price back to its plan and period',()=>{
   vi.stubEnv('STRIPE_PRICE_GROWTH_ANNUAL','price_growth_annual');
   expect(selectionFromPriceId('price_growth_annual')).toEqual({plan:'growth',period:'annual'});
+ });
+
+ it('uses the subscription price before potentially stale Checkout metadata',()=>{
+  vi.stubEnv('STRIPE_PRICE_SCALE_SEMIANNUAL','price_scale_six_months');
+  expect(selectionFromSubscription({items:{data:[{price:{id:'price_scale_six_months'}}]},metadata:{plan_code:'core',billing_period:'monthly'}})).toEqual({plan:'scale',period:'semiannual'});
  });
 });
