@@ -31,6 +31,8 @@ Create nine recurring prices and set their IDs in the `STRIPE_PRICE_CORE_*`, `ST
 
 Checkout buttons use the nine Stripe Payment Links declared in `src/billing/plans.ts`. The price IDs remain required so webhook and onboarding processing can map the completed Checkout Session back to its plan and billing period. The current links are Stripe test-mode links and must be replaced with live Payment Links before accepting a production customer.
 
+After `checkout.session.completed`, the backend queues a welcome email with a `Set up your account` button. The link carries only the Stripe Checkout Session ID; the onboarding endpoint retrieves the session and subscription directly from Stripe, verifies the billing email and active payment or trial state, and only then provisions the workspace.
+
 Keep the Customer Portal configuration limited to payment-method changes, invoice history and plan switching at the end of the paid period. Cancellation remains disabled there because it runs through the in-product retention flow. Checkout and subscription metadata must preserve `plan_code` and `billing_period`; webhooks synchronize those values locally.
 
 Renewal is automatic. Cancellation stops the next renewal without a prorated refund. A failed payment starts a three-day grace period; after it expires, new audits are suspended. A later paid invoice reactivates the account. Final subscription cancellation starts the existing 30-day data-deletion window.
