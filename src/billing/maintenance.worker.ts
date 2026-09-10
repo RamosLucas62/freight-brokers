@@ -4,12 +4,14 @@ import {processNextStripeEvent} from './repository.js';
 import {createOverageInvoice} from './stripe.js';
 import * as freeAudits from '../free-audit/repository.js';
 import {failure,info} from '../observability/logger.js';
+import {processOnboardingInvite} from './onboarding.worker.js';
 
 type DeletionJob={id:string;tenant_id:string;attempts:number};
 type UsageSettlement={id:string;usage_month:string;overage_count:number;unit_amount_cents:number;stripe_customer_id:string;stripe_subscription_id:string};
 
 async function maintain(){
  const db=getSupabaseClient();
+ for(let index=0;index<10&&await processOnboardingInvite();index++);
  for(let index=0;index<25&&await processNextStripeEvent();index++);
  const resumed=await db.rpc('resume_due_customer_pauses',{});
  if(resumed.error)throw resumed.error;

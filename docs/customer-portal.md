@@ -12,11 +12,13 @@ O servidor existente serve o painel em `/`, sem serviço de frontend separado. O
 
 ## Assinatura e onboarding
 
-A contratação começa no e-mail da auditoria gratuita, cujo botão abre `https://aiolympian.com/pricing`. Nessa página pública, o cliente escolhe plano e período e inicia o Stripe Checkout pelo endpoint público documentado em [free-audit-webhook.md](free-audit-webhook.md). O portal é exclusivo para login e onboarding; não exibe planos. Após pagamento concluído, o Stripe retorna para `/onboarding?session_id=...`, e o backend consulta a sessão antes de criar qualquer empresa ativa.
+A contratação começa no resultado privado da auditoria gratuita, onde o cliente escolhe plano e período e abre o Stripe Payment Link correspondente. O portal é exclusivo para login e onboarding; não exibe planos. Após o Checkout ser concluído, o webhook cria uma entrega idempotente de boas-vindas. O e-mail contém um botão para `/onboarding?session_id=...`; o backend consulta novamente a sessão e a assinatura na Stripe antes de criar qualquer empresa ativa.
 
 Configure também `STRIPE_RETENTION_COUPON_ID` com um cupom Stripe de **15% e duração `once`** e `STRIPE_PORTAL_CONFIGURATION_ID` com uma configuração dedicada do Customer Portal. Nessa configuração, habilite troca de forma de pagamento e histórico de faturas, mas deixe o cancelamento de assinatura desabilitado: o cancelamento deve passar pelo fluxo de retenção do próprio portal.
 
 No endpoint Stripe `/webhooks/stripe`, assine pelo menos `checkout.session.completed`, `invoice.payment_failed`, `invoice.paid`, `customer.subscription.updated` e `customer.subscription.deleted`. Falha de pagamento inicia três dias de carência e depois pausa o processamento; pagamento confirmado reativa; assinatura encerrada inativa a conta e agenda a eliminação dos dados operacionais após 30 dias.
+
+Convites de onboarding usam uma fila própria e são enviados pelo worker com chave idempotente baseada na Checkout Session. Entregas interrompidas ou indisponibilidade temporária do provedor são retomadas com backoff. A migration 019 também inclui checkouts anteriores que ainda não possuem workspace, evitando que uma compra confirmada antes do deploy fique sem convite.
 
 Em **Settings & billing**, o responsável financeiro pode abrir o Customer Portal, receber o desconto único, pausar por 30 dias (uma vez a cada 12 meses) ou agendar o cancelamento para o fim do período pago. A exclusão definitiva remove PDFs do R2, faturas, exceções, relatórios, destinatários e acessos; permanece apenas um registro mínimo anonimizado de cobrança e da execução da exclusão.
 
