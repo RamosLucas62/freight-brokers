@@ -42,6 +42,16 @@ async function notifyOwner(email:string|undefined,tenant:string,summary:string){
  if(!email)return;await sendSecurityEmail({to:email,subject:'Security change to your Freight Audit account',idempotencyKey:`security-change-${tenant}-${createHash('sha256').update(summary).digest('hex').slice(0,32)}-${Math.floor(Date.now()/300000)}`,html:`<h1>Account security change</h1><p>${escapeHtml(summary)}</p><p>If you did not make this change, contact support and revoke portal access immediately.</p>`});
 }
 function stripeId(value:string|{id?:string}|null|undefined):string{return typeof value==='string'?value:value?.id??'';}
+async function onboardingSubscription(sessionId:string){
+ const checkout=await retrieveCheckoutSession(sessionId);
+ const subscriptionId=stripeId(checkout.subscription);const customerId=stripeId(checkout.customer);
+ const checkoutComplete=checkout.status==='complete'&&Boolean(subscriptionId)&&Boolean(customerId);
+ const subscription=checkoutComplete?await retrieveSubscription(subscriptionId):null;
+ const customerMatches=Boolean(subscription)&&subscription?.id===subscriptionId&&stripeId(subscription?.customer)===customerId;
+ const validTrial=customerMatches&&subscription?.status==='trialing'&&Number(subscription.trial_end)>Date.now()/1000;
+ const paidAndActive=customerMatches&&checkout.payment_status==='paid'&&subscription?.status==='active';
+ return {checkout,subscription,subscriptionId,customerId,checkoutComplete,validTrial,paidAndActive};
+}
 async function sendWelcomeEmail(input:{email:string;company:string;plan:string;accessUrl:string;sessionId:string;trialEndsAt?:Date}){
  const button='display:inline-block;background:#f4512c;color:#fff;text-decoration:none;font-weight:700;padding:14px 22px;border:2px solid #111;border-radius:6px;box-shadow:4px 4px 0 #111';
  const subscriptionCopy=input.trialEndsAt
@@ -75,6 +85,15 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  };
  if(!(await take({scope:'portal-global-minute',limit:120,windowSeconds:60})))return true;
  if(!(await take({scope:'portal-global-burst',limit:30,windowSeconds:10})))return true;
+ if(url.pathname==='/api/portal/onboarding/context'&&req.method==='GET'){
+  if(!(await take({scope:'onboarding-context-ip',limit:30,windowSeconds:3600,failClosed:true})))return true;
+  const sessionId=z.string().startsWith('cs_').max(255).parse(url.searchParams.get('session_id'));
+  const state=await onboardingSubscription(sessionId);
+  if(!state.checkoutComplete){send(402,{error:'Checkout is not complete yet.'});return true;}
+  if(!state.paidAndActive&&!state.validTrial){send(402,{error:'We could not confirm this subscription. Please use the newest setup email or contact support.'});return true;}
+  const selectedPlan=planFromMetadata(state.checkout.metadata?.plan_code);
+  send(200,{email:state.checkout.customer_details?.email??null,plan_code:selectedPlan,plan_name:plans[selectedPlan].name,max_recipients:plans[selectedPlan].maxRecipients,trialing:state.validTrial});return true;
+ }
  if(url.pathname==='/api/portal/recipient/confirm'&&req.method==='POST'){
   if(!(await take({scope:'recipient-confirm',limit:10,windowSeconds:600,failClosed:true})))return true;
   const {token}=z.object({token:z.string().min(32).max(128)}).parse(await body(req));
@@ -103,18 +122,15 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(!(await take({scope:'onboarding-ip',limit:5,windowSeconds:3600,failClosed:true})))return true;
  const input=z.object({session_id:z.string().startsWith('cs_').max(255),company_name:z.string().trim().min(2).max(200),email:z.string().email().max(254),
   timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(500)}).parse(await body(req));
- const checkout=await retrieveCheckoutSession(input.session_id);
- const subscriptionId=stripeId(checkout.subscription);const customerId=stripeId(checkout.customer);
- if(checkout.status!=='complete'||!subscriptionId||!customerId){send(402,{error:'Checkout is not complete yet.'});return true;}
- const subscription=await retrieveSubscription(subscriptionId);const subscriptionCustomerId=stripeId(subscription.customer);
- const paidAndActive=checkout.payment_status==='paid'&&subscription.status==='active';
- const validTrial=checkout.payment_status==='no_payment_required'&&subscription.status==='trialing'&&Number(subscription.trial_end)>Date.now()/1000;
- if(subscription.id!==subscriptionId||subscriptionCustomerId!==customerId||(!paidAndActive&&!validTrial)){send(402,{error:'Subscription is not active yet.'});return true;}
- const billingStatus=validTrial?'trialing':'active';const trialEndsAt=validTrial?new Date(Number(subscription.trial_end)*1000):undefined;
+ const state=await onboardingSubscription(input.session_id);const {checkout,subscription,subscriptionId,customerId,validTrial,paidAndActive}=state;
+ if(!state.checkoutComplete){send(402,{error:'Checkout is not complete yet.'});return true;}
+ if(!paidAndActive&&!validTrial){send(402,{error:'We could not confirm this subscription. Please use the newest setup email or contact support.'});return true;}
+ const billingStatus=validTrial?'trialing':'active';const trialEndsAt=validTrial?new Date(Number(subscription!.trial_end)*1000):undefined;
  const selectedPlan=planFromMetadata(checkout.metadata?.plan_code);const selectedPeriod=periodFromMetadata(checkout.metadata?.billing_period);
- if(input.report_emails.length>plans[selectedPlan].maxRecipients){send(409,{error:`The ${plans[selectedPlan].name} plan supports up to ${plans[selectedPlan].maxRecipients} report recipients.`});return true;}
  const email=input.email.toLowerCase();
  if(checkout.customer_details?.email?.toLowerCase()!==email){send(403,{error:'Use the same email address used during checkout.'});return true;}
+ const requested=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];if(!requested.includes(email))requested.unshift(email);
+ if(requested.length>plans[selectedPlan].maxRecipients){send(409,{error:`The ${plans[selectedPlan].name} plan supports up to ${plans[selectedPlan].maxRecipients} report recipients.`});return true;}
  const slugBase=input.company_name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,45)||'customer';
  const db=getSupabaseClient();
  operation='onboarding.identity_lookup';
@@ -141,7 +157,6 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const billingState=await db.rpc('sync_onboarding_billing_state',{p_session_id:input.session_id,p_subscription_id:subscriptionId,p_status:billingStatus,p_trial_ends_at:trialEndsAt?.toISOString()??null});if(billingState.error)throw billingState.error;
  operation='onboarding.owner_assign';
  const owner=await db.rpc('secure_onboarding_owner',{p_tenant:onboardTenant,p_user:userId});if(owner.error)throw owner.error;
- const requested=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];if(!requested.includes(email))requested.unshift(email);
  const contacts=confirmationContacts(requested);
  operation='onboarding.notifications_save';
  const savedContacts=await db.rpc('portal_save_notification_settings_v2',{p_user:userId,p_tenant:onboardTenant,p_timezone:input.timezone,p_contacts:contacts.map(({email,token_hash})=>({email,token_hash})),p_ip_fingerprint:privacyKey(ip).slice(0,32)});if(savedContacts.error)throw savedContacts.error;

@@ -50,6 +50,28 @@ it('accepts a completed card-backed free trial and records its end date',async()
  expect(mocks.rpc).toHaveBeenCalledWith('sync_onboarding_billing_state',{p_session_id:'cs_test_trial',p_subscription_id:'sub_trial',p_status:'trialing',p_trial_ends_at:'2026-09-16T12:00:00.000Z'});
  expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({html:expect.stringContaining('free trial')}));
 });
+it('accepts a Stripe trial even when Checkout reports the saved card as paid',async()=>{
+ const trialEnd=Date.parse('2026-09-16T12:00:00Z')/1000;
+ mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_paid_trial',payment_status:'paid',status:'complete',customer:'cus_trial',subscription:'sub_trial',customer_details:{email:'owner@example.com'},metadata:{plan_code:'scale',billing_period:'semiannual'}});
+ mocks.retrieveSubscription.mockResolvedValue({id:'sub_trial',status:'trialing',customer:'cus_trial',trial_end:trialEnd});
+ mocks.rpc.mockImplementation(async(name)=>name==='portal_onboarding_user_id'?{data:other,error:null}:name==='portal_complete_onboarding'?{data:{tenant_id:tenant,alias:'acme',audit_email:'acme@audit.aiolympian.com'},error:null}:name==='portal_save_notification_settings_v2'?{data:{pending_verification:[]},error:null}:{data:null,error:null});
+ const response=await fetch(base+'/api/portal/onboarding',{method:'POST',headers,body:JSON.stringify({session_id:'cs_test_paid_trial',company_name:'Acme Logistics',email:'owner@example.com',timezone:'America/Sao_Paulo',report_emails:['owner@example.com']})});
+ expect(response.status).toBe(200);
+ expect(mocks.rpc).toHaveBeenCalledWith('sync_onboarding_billing_state',{p_session_id:'cs_test_paid_trial',p_subscription_id:'sub_trial',p_status:'trialing',p_trial_ends_at:'2026-09-16T12:00:00.000Z'});
+});
+it('loads the verified plan limit and checkout email for the onboarding form',async()=>{
+ const trialEnd=Date.parse('2026-09-16T12:00:00Z')/1000;
+ mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_context',payment_status:'paid',status:'complete',customer:'cus_trial',subscription:'sub_trial',customer_details:{email:'owner@example.com'},metadata:{plan_code:'core',billing_period:'monthly'}});
+ mocks.retrieveSubscription.mockResolvedValue({id:'sub_trial',status:'trialing',customer:'cus_trial',trial_end:trialEnd});
+ const response=await fetch(base+'/api/portal/onboarding/context?session_id=cs_test_context');
+ expect(response.status).toBe(200);expect(await response.json()).toEqual({email:'owner@example.com',plan_code:'core',plan_name:'Core',max_recipients:3,trialing:true});
+ expect(mocks.rpc).not.toHaveBeenCalled();
+});
+it('counts the checkout owner inside the plan recipient limit',async()=>{
+ mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_limit',payment_status:'paid',status:'complete',customer:'cus_1',subscription:'sub_1',customer_details:{email:'owner@example.com'},metadata:{plan_code:'core',billing_period:'monthly'}});
+ const response=await fetch(base+'/api/portal/onboarding',{method:'POST',headers,body:JSON.stringify({session_id:'cs_test_limit',company_name:'Acme',email:'owner@example.com',timezone:'UTC',report_emails:['one@example.com','two@example.com','three@example.com']})});
+ expect(response.status).toBe(409);expect(await response.json()).toEqual({error:'The Core plan supports up to 3 report recipients.'});expect(mocks.rpc).not.toHaveBeenCalledWith('portal_complete_onboarding',expect.anything());
+});
 it('rejects a no-payment checkout that is not an active Stripe trial',async()=>{
  mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_free',payment_status:'no_payment_required',status:'complete',customer:'cus_1',subscription:'sub_1',customer_details:{email:'owner@example.com'},metadata:{plan_code:'core',billing_period:'monthly'}});
  mocks.retrieveSubscription.mockResolvedValue({id:'sub_1',status:'active',customer:'cus_1',trial_end:null});
