@@ -5,7 +5,7 @@ import {createClient} from '@supabase/supabase-js';
 import {z} from 'zod';
 import {adminAction} from './admin.js';
 import {getSupabaseClient,timedFetch} from '../config/supabase.js';
-import {applyRetentionDiscount,cancelSubscriptionAtPeriodEnd,createBillingPortalSession,pauseSubscriptionOneMonth,retrieveCheckoutSession} from '../billing/stripe.js';
+import {applyRetentionDiscount,cancelSubscriptionAtPeriodEnd,createBillingPortalSession,pauseSubscriptionOneMonth,retrieveCheckoutSession,retrieveSubscription} from '../billing/stripe.js';
 import type {RateLimiter,RateLimitRule} from '../security/rate-limit.js';
 import {clientIp,privacyKey} from '../security/rate-limit.js';
 import {verifyTurnstile} from '../security/turnstile.js';
@@ -41,11 +41,15 @@ const escapeHtml=(value:string)=>value.replace(/[&<>"']/g,char=>({'&':'&amp;','<
 async function notifyOwner(email:string|undefined,tenant:string,summary:string){
  if(!email)return;await sendSecurityEmail({to:email,subject:'Security change to your Freight Audit account',idempotencyKey:`security-change-${tenant}-${createHash('sha256').update(summary).digest('hex').slice(0,32)}-${Math.floor(Date.now()/300000)}`,html:`<h1>Account security change</h1><p>${escapeHtml(summary)}</p><p>If you did not make this change, contact support and revoke portal access immediately.</p>`});
 }
-async function sendWelcomeEmail(input:{email:string;company:string;plan:string;accessUrl:string;sessionId:string}){
+function stripeId(value:string|{id?:string}|null|undefined):string{return typeof value==='string'?value:value?.id??'';}
+async function sendWelcomeEmail(input:{email:string;company:string;plan:string;accessUrl:string;sessionId:string;trialEndsAt?:Date}){
  const button='display:inline-block;background:#f4512c;color:#fff;text-decoration:none;font-weight:700;padding:14px 22px;border:2px solid #111;border-radius:6px;box-shadow:4px 4px 0 #111';
+ const subscriptionCopy=input.trialEndsAt
+  ?`Your 7-day free trial of the ${escapeHtml(input.plan)} plan for <strong>${escapeHtml(input.company)}</strong> has started. Your first charge is scheduled for ${escapeHtml(input.trialEndsAt.toLocaleDateString('en-US',{dateStyle:'long',timeZone:'UTC'}))}, unless you cancel before then.`
+  :`Your ${escapeHtml(input.plan)} subscription for <strong>${escapeHtml(input.company)}</strong> is active and your secure workspace is ready.`;
  await sendSecurityEmail({
   to:input.email,subject:'Your Olympian account is ready',idempotencyKey:`portal-welcome-${createHash('sha256').update(input.sessionId).digest('hex').slice(0,40)}`,
-  html:`<h1>Welcome to Olympian</h1><p>Your ${escapeHtml(input.plan)} subscription for <strong>${escapeHtml(input.company)}</strong> is active and your secure workspace is ready.</p><p><a href="${escapeHtml(input.accessUrl)}" style="${button}">Access the platform</a></p><p>This private link signs you in and expires for your protection. If it expires, request a new access link on the portal using ${escapeHtml(input.email)}.</p><p>If you did not create this subscription, contact support immediately.</p>`,
+  html:`<h1>Welcome to Olympian</h1><p>${subscriptionCopy}</p><p><a href="${escapeHtml(input.accessUrl)}" style="${button}">Access the platform</a></p><p>This private link signs you in and expires for your protection. If it expires, request a new access link on the portal using ${escapeHtml(input.email)}.</p><p>If you did not create this subscription, contact support immediately.</p>`,
  });
 }
 export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:RateLimiter):Promise<boolean>{
@@ -100,7 +104,13 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const input=z.object({session_id:z.string().startsWith('cs_').max(255),company_name:z.string().trim().min(2).max(200),email:z.string().email().max(254),
   timezone:z.string().trim().min(1).max(100),report_emails:z.array(z.string().email().max(254)).min(1).max(500)}).parse(await body(req));
  const checkout=await retrieveCheckoutSession(input.session_id);
- if(checkout.payment_status!=='paid'||checkout.status!=='complete'){send(402,{error:'Payment is not complete yet.'});return true;}
+ const subscriptionId=stripeId(checkout.subscription);const customerId=stripeId(checkout.customer);
+ if(checkout.status!=='complete'||!subscriptionId||!customerId){send(402,{error:'Checkout is not complete yet.'});return true;}
+ const subscription=await retrieveSubscription(subscriptionId);const subscriptionCustomerId=stripeId(subscription.customer);
+ const paidAndActive=checkout.payment_status==='paid'&&subscription.status==='active';
+ const validTrial=checkout.payment_status==='no_payment_required'&&subscription.status==='trialing'&&Number(subscription.trial_end)>Date.now()/1000;
+ if(subscription.id!==subscriptionId||subscriptionCustomerId!==customerId||(!paidAndActive&&!validTrial)){send(402,{error:'Subscription is not active yet.'});return true;}
+ const billingStatus=validTrial?'trialing':'active';const trialEndsAt=validTrial?new Date(Number(subscription.trial_end)*1000):undefined;
  const selectedPlan=planFromMetadata(checkout.metadata?.plan_code);const selectedPeriod=periodFromMetadata(checkout.metadata?.billing_period);
  if(input.report_emails.length>plans[selectedPlan].maxRecipients){send(409,{error:`The ${plans[selectedPlan].name} plan supports up to ${plans[selectedPlan].maxRecipients} report recipients.`});return true;}
  const email=input.email.toLowerCase();
@@ -120,13 +130,15 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  let result:{data:any,error:any}|undefined;
  operation='onboarding.workspace_create';
  for(let i=0;i<8;i++){
-  result=await db.rpc('portal_complete_onboarding',{p_session_id:input.session_id,p_company_name:input.company_name,p_alias:i?`${slugBase}-${i+1}`:slugBase,p_user_id:userId,p_email:email,p_stripe_customer_id:String(checkout.customer??''),p_stripe_subscription_id:String(checkout.subscription??''),p_timezone:input.timezone,p_report_emails:[email]});
+  result=await db.rpc('portal_complete_onboarding',{p_session_id:input.session_id,p_company_name:input.company_name,p_alias:i?`${slugBase}-${i+1}`:slugBase,p_user_id:userId,p_email:email,p_stripe_customer_id:customerId,p_stripe_subscription_id:subscriptionId,p_timezone:input.timezone,p_report_emails:[email]});
   if(!result.error)break;
  }
  if(result?.error)throw result.error;
  const onboardTenant=String(result?.data?.tenant_id??'');
  operation='onboarding.plan_assign';
  const assigned=await db.rpc('assign_billing_plan',{p_tenant:onboardTenant,p_session_id:input.session_id,p_plan:selectedPlan,p_period:selectedPeriod});if(assigned.error)throw assigned.error;
+ operation='onboarding.billing_state_sync';
+ const billingState=await db.rpc('sync_onboarding_billing_state',{p_session_id:input.session_id,p_subscription_id:subscriptionId,p_status:billingStatus,p_trial_ends_at:trialEndsAt?.toISOString()??null});if(billingState.error)throw billingState.error;
  operation='onboarding.owner_assign';
  const owner=await db.rpc('secure_onboarding_owner',{p_tenant:onboardTenant,p_user:userId});if(owner.error)throw owner.error;
  const requested=[...new Set(input.report_emails.map(value=>value.toLowerCase()))];if(!requested.includes(email))requested.unshift(email);
@@ -138,7 +150,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const accessUrl=access.data?.properties?.action_link;
  if(access.error||!accessUrl)throw access.error??new Error('PORTAL_ACCESS_LINK_NOT_CREATED');
  operation='onboarding.welcome_email_send';
- await sendWelcomeEmail({email,company:input.company_name,plan:plans[selectedPlan].name,accessUrl,sessionId:input.session_id});
+ await sendWelcomeEmail({email,company:input.company_name,plan:plans[selectedPlan].name,accessUrl,sessionId:input.session_id,trialEndsAt});
  const pending=new Set<string>(savedContacts.data?.pending_verification??[]);
  try{await sendConfirmations(contacts.filter(contact=>pending.has(contact.email)),origin);}
  catch(error){failure('portal.onboarding.report_confirmation_failed',error,{request_id:requestId(req),tenant:onboardTenant,pending_count:pending.size});}
@@ -232,7 +244,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   const [settings,contacts,billing,senders,usage]=await Promise.all([
    db.from('audit_notification_settings').select('timezone,daily_hour,daily_enabled,monthly_enabled,immediate_enabled,immediate_threshold').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_report_contacts').select('email,verified_at').eq('tenant_id',tenant).eq('enabled',true).order('email'),
-   db.from('audit_billing_customers').select('billing_email,status,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
+   db.from('audit_billing_customers').select('billing_email,status,trial_ends_at,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_inbound_sender_rules').select('sender_email').eq('tenant_id',tenant).eq('enabled',true).order('sender_email'),
    db.from('audit_invoice_usage').select('id',{count:'exact',head:true}).eq('tenant_id',tenant).gte('created_at',monthStart.toISOString()),
   ]);
@@ -240,7 +252,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   const bill=billing.data;
   const tenantRole=membership.data?.find(m=>m.tenant_id===tenant)?.role;
   send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
-   billing:bill?{status:bill.status,paused_until:bill.paused_until,payment_grace_until:bill.payment_grace_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
+   billing:bill?{status:bill.status,trial_ends_at:bill.trial_ends_at,paused_until:bill.paused_until,payment_grace_until:bill.payment_grace_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
     plan_code:bill.plan_code,billing_period:bill.billing_period,included_invoices:bill.included_invoices,overage_unit_amount_cents:bill.overage_unit_amount_cents,usage_count:usage.count??0,
     deletion_scheduled_at:bill.deletion_scheduled_at,can_manage:!isAdmin&&bill.billing_email===user.user.email?.toLowerCase(),
     discount_available:!bill.retention_discount_used_at,pause_available:!bill.pause_used_at||new Date(bill.pause_used_at).getTime()<Date.now()-365*86400000}:null});return true;
@@ -273,7 +285,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
    if(!billing.stripe_customer_id)throw new Error('Missing Stripe customer');
    const session=await createBillingPortalSession(billing.stripe_customer_id);send(200,{url:session.url});return true;
   }
-  if(!billing.stripe_subscription_id||!['active','canceling','paused'].includes(billing.status)){send(409,{error:'This subscription cannot be changed in its current state.'});return true;}
+  if(!billing.stripe_subscription_id||!['trialing','active','canceling','paused'].includes(billing.status)){send(409,{error:'This subscription cannot be changed in its current state.'});return true;}
   const action=billingAction[1];
   if(action!=='cancel'&&billing.status!=='active'){send(409,{error:'Retention options are available only while the subscription is active.'});return true;}
   if(action==='retention-discount'){

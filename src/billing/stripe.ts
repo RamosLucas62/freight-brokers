@@ -3,7 +3,9 @@ import {privacyKey} from '../security/rate-limit.js';
 import {readResponseBody} from '../security/http.js';
 import {paymentLink,type BillingPeriod,type PlanCode} from './plans.js';
 
-export type StripeCheckoutSession={id:string;url?:string|null;payment_status?:string;status?:string;customer?:string;subscription?:string;customer_details?:{email?:string|null};metadata?:Record<string,string>} ;
+type StripeReference=string|{id?:string}|null;
+export type StripeCheckoutSession={id:string;url?:string|null;payment_status?:string;status?:string;customer?:StripeReference;subscription?:StripeReference;customer_details?:{email?:string|null};metadata?:Record<string,string>} ;
+export type StripeSubscription={id:string;status?:string;customer?:StripeReference;trial_end?:number|null};
 
 function config(){
  const secret=process.env.STRIPE_SECRET_KEY;
@@ -23,6 +25,9 @@ export async function createCheckoutSession(email:string,plan:PlanCode,period:Bi
 }
 export async function retrieveCheckoutSession(id:string){
  return stripe('/checkout/sessions/'+encodeURIComponent(id)) as Promise<StripeCheckoutSession>;
+}
+export async function retrieveSubscription(id:string){
+ return stripe('/subscriptions/'+encodeURIComponent(id)) as Promise<StripeSubscription>;
 }
 export async function createBillingPortalSession(customerId:string){
  const origin=process.env.PORTAL_URL;
