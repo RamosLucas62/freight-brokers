@@ -5,7 +5,7 @@ const money=value=>value==null?'—':new Intl.NumberFormat('en-US',{style:'curre
 const date=value=>value?new Date(value).toLocaleString('en-US',{dateStyle:'short',timeStyle:'short'}):'—';
 const invoiceDate=value=>{if(!value)return '—';const [year,month,day]=value.split('-').map(Number);return new Intl.DateTimeFormat('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}).format(new Date(year,month-1,day));};
 const badge=status=>`<span class="badge ${escape(status)}">${escape(status)}</span>`;
-const jobReason=code=>({
+const jobReason=(row,report)=>({
  PROCESSING_FAILED:'Processing was interrupted. Review the submission and resubmit it when the service is available.',
  ACCOUNT_UNAVAILABLE:'Processing is paused because the account is not currently available.',
  SENDER_AUTHENTICATION_FAILED:'The sender could not be authenticated.',
@@ -13,7 +13,9 @@ const jobReason=code=>({
  NO_PDF_ATTACHMENTS:'No supported PDF attachment was found in this email.',
  AUTOMATIC_EMAIL:'Automatic or reply-generated email ignored.',
  WORKER_INTERRUPTED:'Processing was interrupted before completion. Review before resubmitting.',
-}[code]??(code||'No issue reported'));
+}[row.error_code]??(row.error_code||(row.status==='completed'&&Number(report?.total_exceptions)>0
+ ?`Processing completed with ${Number(report.total_exceptions).toLocaleString('en-US')} item${Number(report.total_exceptions)===1?'':'s'} requiring review.`
+ :row.status==='completed'?'Processing completed. No items require review.':'No processing issue reported.')));
 const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history',settings:'Settings & billing'};
 const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.',settings:'Choose who receives reports and keep your subscription up to date.'};
 let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null,settingsData=null;
@@ -222,7 +224,7 @@ function detail(row){
  selected=row;const report=row.report??row.result;
  const field=(label,value)=>`<p><small>${label}</small>${escape(value)}</p>`;
  let html=`<h2>${view==='invoices'?'Invoice '+escape(row.numero_fatura):names[view]}</h2><p class="muted">${escape(row.id??row.run_id)}</p>`;
- if(view==='jobs')html+=badge(row.status)+`<div class="detail-grid">${field('Received',date(row.created_at))}${field('Started',date(row.started_at))}${field('Finished',date(row.finished_at))}${field('What happened',jobReason(row.error_code))}</div>`;
+ if(view==='jobs')html+=badge(row.status)+`<div class="detail-grid">${field('Received',date(row.created_at))}${field('Started',date(row.started_at))}${field('Finished',date(row.finished_at))}${field('What happened',jobReason(row,report))}</div>`;
  if(view==='invoices')html+=`<div class="detail-grid">${field('Carrier',row.carrier_name)}${field('MC',row.mc_number)}${field('Load',row.numero_carga)}${field('Amount',money(row.valor_total))}${field('Origin',row.origem)}${field('Destination',row.destino)}${field('Invoice date',invoiceDate(row.data_fatura))}</div>`;
  if(report){html+=`<div class="detail-grid">${field('Invoices processed',report.total_invoices_processed)}${field('Exceptions detected',report.total_exceptions)}${field('Amount under review',money(report.valor_total_under_review))}</div>`;
  for(const e of report.exceptions??[])html+=`<div class="exception"><strong>${escape(e.rule_label??e.tipo_regra)}</strong><p>${escape(e.descricao)}</p><small>Invoice ${escape(e.invoice_id)} · ${money(e.valor_envolvido)} · ${escape(e.source_reference?.file)} · Page ${escape(e.source_reference?.page)}</small></div>`;
