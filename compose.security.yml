@@ -35,7 +35,8 @@ services:
     networks: [private]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
-    mem_limit: 512m
+    # clamd keeps the signature database in memory so every PDF does not reload it.
+    mem_limit: 1536m
     cpus: 1.0
     pids_limit: 80
 networks:
