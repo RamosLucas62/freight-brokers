@@ -1,4 +1,5 @@
 import type {NotificationData,NotificationException} from './types.js';
+import {ruleLabel} from '../report/rule-labels.js';
 
 const money=(value:number|null|undefined)=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(value??0));
 const date=(value:string,timeZone:string)=>new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeZone}).format(new Date(value));
@@ -7,7 +8,7 @@ const csv=(value:unknown)=>`"${String(value??'').replaceAll('"','""')}"`;
 
 function riskRows(risks:NotificationException[],timeZone:string):string{
  if(!risks.length)return '<p style="padding:18px;background:#edf8f2;color:#267859;border-radius:6px">No risks were detected during this period.</p>';
- return `<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr>${['Invoice','Carrier','Risk','Amount','Detected'].map(h=>`<th style="text-align:left;padding:10px;border-bottom:1px solid #dfe4ea">${h}</th>`).join('')}</tr></thead><tbody>${risks.map(r=>`<tr><td style="padding:10px;border-bottom:1px solid #eef0f3">${escapeHtml(r.invoice?.numero_fatura??r.invoice_id)}</td><td style="padding:10px;border-bottom:1px solid #eef0f3">${escapeHtml(r.invoice?.carrier_name??'—')}</td><td style="padding:10px;border-bottom:1px solid #eef0f3">${escapeHtml(r.tipo_regra)}<br><small>${escapeHtml(r.descricao)}</small></td><td style="padding:10px;border-bottom:1px solid #eef0f3">${money(r.valor_envolvido)}</td><td style="padding:10px;border-bottom:1px solid #eef0f3">${date(r.created_at,timeZone)}</td></tr>`).join('')}</tbody></table>`;
+ return `<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr>${['Invoice','Carrier','Risk','Amount','Detected'].map(h=>`<th style="text-align:left;padding:10px;border-bottom:1px solid #dfe4ea">${h}</th>`).join('')}</tr></thead><tbody>${risks.map(r=>`<tr><td style="padding:10px;border-bottom:1px solid #eef0f3">${escapeHtml(r.invoice?.numero_fatura??r.invoice_id)}</td><td style="padding:10px;border-bottom:1px solid #eef0f3">${escapeHtml(r.invoice?.carrier_name??'—')}</td><td style="padding:10px;border-bottom:1px solid #eef0f3">${escapeHtml(ruleLabel(r.tipo_regra))}<br><small>${escapeHtml(r.descricao)}</small></td><td style="padding:10px;border-bottom:1px solid #eef0f3">${money(r.valor_envolvido)}</td><td style="padding:10px;border-bottom:1px solid #eef0f3">${date(r.created_at,timeZone)}</td></tr>`).join('')}</tbody></table>`;
 }
 
 export function composeEmail(data:NotificationData,portalUrl:string):{subject:string;html:string}{
@@ -16,7 +17,7 @@ export function composeEmail(data:NotificationData,portalUrl:string):{subject:st
  const savings=avoided.reduce((sum,r)=>sum+Number(r.avoided_amount??0),0);
  const period=`${date(delivery.period_start,data.timezone)} – ${date(new Date(new Date(delivery.period_end).getTime()-1).toISOString(),data.timezone)}`;
  const subject=delivery.kind==='immediate'
-  ? `[Action required] ${risks[0]?.tipo_regra??'Invoice risk'} · ${companyName}`
+  ? `[Action required] ${ruleLabel(risks[0]?.tipo_regra)} · ${companyName}`
   : delivery.kind==='daily'?`Daily invoice risk summary · ${companyName}`:`Monthly audit impact · ${companyName}`;
  const monthly=delivery.kind==='monthly'?`<div style="display:flex;gap:12px"><p style="padding:14px;background:#f4f6fa"><strong>${risks.length}</strong><br>risks detected</p><p style="padding:14px;background:#edf8f2"><strong>${money(savings)}</strong><br>confirmed loss avoided</p></div>`:'';
  const outcomes=delivery.kind==='monthly'&&avoided.length?`<h2 style="font-size:18px;margin-top:28px">Confirmed avoided losses</h2>${riskRows(avoided,data.timezone)}`:'';
@@ -26,11 +27,11 @@ export function composeEmail(data:NotificationData,portalUrl:string):{subject:st
 export function createCsv(data:NotificationData):Buffer{
  const header=['invoice','load','carrier','risk_type','description','amount_involved','detected_at','resolution','avoided_amount'];
  const lines=[header.map(csv).join(','),...data.risks.map(r=>[
-  r.invoice?.numero_fatura??r.invoice_id,r.invoice?.numero_carga,r.invoice?.carrier_name,r.tipo_regra,r.descricao,
+  r.invoice?.numero_fatura??r.invoice_id,r.invoice?.numero_carga,r.invoice?.carrier_name,ruleLabel(r.tipo_regra),r.descricao,
   r.valor_envolvido,r.created_at,r.resolution_status,r.avoided_amount,
  ].map(csv).join(','))];
  if(data.delivery.kind==='monthly')for(const r of data.avoided.filter(a=>!data.risks.some(x=>x.id===a.id)))lines.push([
-  r.invoice?.numero_fatura??r.invoice_id,r.invoice?.numero_carga,r.invoice?.carrier_name,r.tipo_regra,r.descricao,
+  r.invoice?.numero_fatura??r.invoice_id,r.invoice?.numero_carga,r.invoice?.carrier_name,ruleLabel(r.tipo_regra),r.descricao,
   r.valor_envolvido,r.created_at,r.resolution_status,r.avoided_amount,
  ].map(csv).join(','));
  return Buffer.from('\uFEFF'+lines.join('\r\n'),'utf8');
@@ -50,11 +51,11 @@ export function createPdf(data:NotificationData):Buffer{
   ...(data.delivery.kind==='monthly'?[`Confirmed loss avoided: ${money(savings)}`]:[]),'',
  ];
  const riskBlocks=data.risks.length?data.risks.map((r,i)=>[
-   `${i+1}. Invoice ${r.invoice?.numero_fatura??r.invoice_id} | ${r.tipo_regra} | ${money(r.valor_envolvido)}`,
+   `${i+1}. Invoice ${r.invoice?.numero_fatura??r.invoice_id} | ${ruleLabel(r.tipo_regra)} | ${money(r.valor_envolvido)}`,
    ...wrapText(r.descricao||'').map(line=>`   ${line}`),
   ]):[['No risks were detected during this period.']];
  const outcomeBlock=data.delivery.kind==='monthly'&&data.avoided.length?['','CONFIRMED AVOIDED LOSSES',...data.avoided.map((r,i)=>
-  `${i+1}. Invoice ${r.invoice?.numero_fatura??r.invoice_id} | ${r.tipo_regra} | ${money(r.avoided_amount)}`)]:[];
+  `${i+1}. Invoice ${r.invoice?.numero_fatura??r.invoice_id} | ${ruleLabel(r.tipo_regra)} | ${money(r.avoided_amount)}`)]:[];
  const blocks=[summary,...riskBlocks,...(outcomeBlock.length?[outcomeBlock]:[]),['','Confirmed loss avoided includes only customer-reviewed cases marked as avoided.']];
  const pages:string[][]=[[]];for(const block of blocks){if(pages.at(-1)!.length&&pages.at(-1)!.length+block.length>42)pages.push([]);pages.at(-1)!.push(...block);}
  const pageStart=3,contentStart=pageStart+pages.length,fontRef=contentStart+pages.length,boldFontRef=fontRef+1;
