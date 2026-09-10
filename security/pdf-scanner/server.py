@@ -49,6 +49,8 @@ class Handler(BaseHTTPRequestHandler):
                 virus=command(["clamdscan",f"--config-file={CLAMD_CONFIG}","--no-summary",path],12)
             except subprocess.TimeoutExpired:
                 self.reply(503,{"safe":False,"page_count":0,"reason":"scanner_timeout"}); return
+            except OSError:
+                self.reply(503,{"safe":False,"page_count":0,"reason":"scanner_unavailable"}); return
             if virus.returncode != 0:
                 status=422 if virus.returncode==1 else 503
                 self.reply(status,{"safe":False,"page_count":0,"reason":"malware" if virus.returncode==1 else "scanner_error"}); return
