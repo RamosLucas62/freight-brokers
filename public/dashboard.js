@@ -5,6 +5,15 @@ const money=value=>value==null?'—':new Intl.NumberFormat('en-US',{style:'curre
 const date=value=>value?new Date(value).toLocaleString('en-US',{dateStyle:'short',timeStyle:'short'}):'—';
 const invoiceDate=value=>{if(!value)return '—';const [year,month,day]=value.split('-').map(Number);return new Intl.DateTimeFormat('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}).format(new Date(year,month-1,day));};
 const badge=status=>`<span class="badge ${escape(status)}">${escape(status)}</span>`;
+const jobReason=code=>({
+ PROCESSING_FAILED:'Processing was interrupted. Review the submission and resubmit it when the service is available.',
+ ACCOUNT_UNAVAILABLE:'Processing is paused because the account is not currently available.',
+ SENDER_AUTHENTICATION_FAILED:'The sender could not be authenticated.',
+ SENDER_NOT_AUTHORIZED_OR_QUOTA:'The sender is not authorized for this private intake, or the plan limit was reached.',
+ NO_PDF_ATTACHMENTS:'No supported PDF attachment was found in this email.',
+ AUTOMATIC_EMAIL:'Automatic or reply-generated email ignored.',
+ WORKER_INTERRUPTED:'Processing was interrupted before completion. Review before resubmitting.',
+}[code]??(code||'No issue reported'));
 const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history',settings:'Settings & billing'};
 const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.',settings:'Choose who receives reports and keep your subscription up to date.'};
 let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null,settingsData=null;
@@ -130,11 +139,11 @@ function render(){
  $('metrics').hidden=view!=='jobs';
  $('metrics').innerHTML=[['queued','Queued','Waiting to be processed'],['processing','Processing','Audit in progress'],['completed','Completed','Report available'],['needs_review','Needs review','Review before resubmitting']].map(([key,label,description])=>`<div class="metric ${key==='needs_review'?'attention':''}"><small>${label}</small><strong>${rows.filter(r=>r.status===key).length.toString().padStart(2,'0')}</strong><small>${description}</small></div>`).join('');
  const query=$('search').value.toLowerCase();const filtered=rows.filter(r=>(!query||JSON.stringify(r).toLowerCase().includes(query))&&(view!=='jobs'||!$('status').value||r.status===$('status').value));
- const columns={jobs:['Submission','Received','Status','Exceptions',''],invoices:['Invoice / load','Carrier','Route','Amount',''],reports:['Report','Generated','Invoices','Exceptions','Amount under review',''],exceptions:['Rule','Description','Amount involved','Date',''],history:['Action','Submission','Notes','Performed by','Date','']};
+ const columns={jobs:['Submission','Received','Status','Result',''],invoices:['Invoice / load','Carrier','Route','Amount',''],reports:['Report','Generated','Invoices','Exceptions','Amount under review',''],exceptions:['Rule','Description','Amount involved','Date',''],history:['Action','Submission','Notes','Performed by','Date','']};
  $('table-head').innerHTML='<tr>'+columns[view].map(c=>`<th scope="col">${c}</th>`).join('')+'</tr>';
  $('table-body').innerHTML=filtered.map(r=>{
  const short=escape((r.id??r.run_id).slice(0,8).toUpperCase());let cells=[];
- if(view==='jobs')cells=[`AUD-${short}<small>Email ${escape(r.email_id?.slice(0,8))}</small>`,date(r.created_at),badge(r.status),r.result?.total_exceptions??'—'];
+ if(view==='jobs')cells=[`AUD-${short}<small>Email ${escape(r.email_id?.slice(0,8))}</small>`,date(r.created_at),badge(r.status),r.result?`${r.result.total_exceptions??0} exception${r.result.total_exceptions===1?'':'s'}`:`<small>${escape(jobReason(r.error_code))}</small>`];
  if(view==='invoices')cells=[`${escape(r.numero_fatura)}<small>Load ${escape(r.numero_carga)}</small>`,`${escape(r.carrier_name)}<small>MC ${escape(r.mc_number)}</small>`,`${escape(r.origem)} → ${escape(r.destino)}`,money(r.valor_total)];
  if(view==='reports')cells=[`AUD-${short}`,date(r.created_at),r.report?.total_invoices_processed??0,r.report?.total_exceptions??0,money(r.report?.valor_total_under_review)];
  if(view==='exceptions')cells=[`${escape(r.tipo_regra)}<small>${escape(r.resolution_status??'pending')}</small>`,escape(r.descricao?.slice(0,85)),money(r.valor_envolvido),date(r.created_at)];
@@ -213,7 +222,7 @@ function detail(row){
  selected=row;const report=row.report??row.result;
  const field=(label,value)=>`<p><small>${label}</small>${escape(value)}</p>`;
  let html=`<h2>${view==='invoices'?'Invoice '+escape(row.numero_fatura):names[view]}</h2><p class="muted">${escape(row.id??row.run_id)}</p>`;
- if(view==='jobs')html+=badge(row.status)+`<div class="detail-grid">${field('Received',date(row.created_at))}${field('Started',date(row.started_at))}${field('Finished',date(row.finished_at))}${field('Reason',row.error_code)}</div>`;
+ if(view==='jobs')html+=badge(row.status)+`<div class="detail-grid">${field('Received',date(row.created_at))}${field('Started',date(row.started_at))}${field('Finished',date(row.finished_at))}${field('What happened',jobReason(row.error_code))}</div>`;
  if(view==='invoices')html+=`<div class="detail-grid">${field('Carrier',row.carrier_name)}${field('MC',row.mc_number)}${field('Load',row.numero_carga)}${field('Amount',money(row.valor_total))}${field('Origin',row.origem)}${field('Destination',row.destino)}${field('Invoice date',invoiceDate(row.data_fatura))}</div>`;
  if(report){html+=`<div class="detail-grid">${field('Invoices processed',report.total_invoices_processed)}${field('Exceptions detected',report.total_exceptions)}${field('Amount under review',money(report.valor_total_under_review))}</div>`;
  for(const e of report.exceptions??[])html+=`<div class="exception"><strong>${escape(e.rule_label??e.tipo_regra)}</strong><p>${escape(e.descricao)}</p><small>Invoice ${escape(e.invoice_id)} · ${money(e.valor_envolvido)} · ${escape(e.source_reference?.file)} · Page ${escape(e.source_reference?.page)}</small></div>`;
