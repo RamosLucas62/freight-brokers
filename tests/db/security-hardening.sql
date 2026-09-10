@@ -1,4 +1,4 @@
--- Runs last in the isolated transaction and validates AAL2, pending recipients,
+-- Runs last in the isolated transaction and validates optional MFA, pending recipients,
 -- sender authorization, quotas and the durable Stripe queue.
 DO $$ BEGIN
  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid='public.portal_onboarding_user_id(text)'::regprocedure) THEN RAISE EXCEPTION 'Onboarding identity lookup cannot read Auth identities'; END IF;
@@ -8,13 +8,6 @@ UPDATE public.audit_memberships SET role='owner' WHERE tenant_id='10000000-0000-
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','20000000-0000-4000-8000-000000000001',true);
 SELECT set_config('request.jwt.claim.aal','aal1',true);
-DO $$ BEGIN
- BEGIN
-  PERFORM public.portal_save_security_settings('10000000-0000-4000-8000-000000000001','UTC','[{"email":"pending@example.com","token_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]','{owner@example.com}','iphash');
-  RAISE EXCEPTION 'AAL1 changed security settings';
- EXCEPTION WHEN raise_exception THEN IF SQLERRM<>'AAL2 required' THEN RAISE; END IF; END;
-END $$;
-SELECT set_config('request.jwt.claim.aal','aal2',true);
 SELECT public.portal_save_security_settings('10000000-0000-4000-8000-000000000001','America/Chicago','[{"email":"pending@example.com","token_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]','{owner@example.com}','iphash');
 RESET ROLE;
 

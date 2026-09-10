@@ -47,3 +47,11 @@ export function selectionFromPriceId(value:unknown):{plan:PlanCode;period:Billin
   if(process.env[prices[plan][period].env]===value)return {plan,period};
  return null;
 }
+
+export function selectionFromSubscription(value:unknown):{plan:PlanCode;period:BillingPeriod}|null{
+ if(!value||typeof value!=='object')return null;
+ const subscription=value as {metadata?:Record<string,unknown>;items?:{data?:Array<{price?:{id?:unknown}}>} };
+ const fromPrice=selectionFromPriceId(subscription.items?.data?.[0]?.price?.id);if(fromPrice)return fromPrice;
+ const plan=subscription.metadata?.plan_code,period=subscription.metadata?.billing_period;
+ return (plan==='core'||plan==='growth'||plan==='scale')&&(period==='monthly'||period==='semiannual'||period==='annual')?{plan,period}:null;
+}
