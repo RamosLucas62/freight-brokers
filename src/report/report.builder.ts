@@ -2,18 +2,7 @@ import type { InvoiceRecord } from '../types/invoice.types.js';
 import type { RuleException } from '../types/rule.types.js';
 import type { AuditContext } from '../types/carrier.types.js';
 import type { AuditReport, ReportException } from '../types/report.types.js';
-
-const RULE_LABELS: Record<string, string> = {
-  LOW_CONFIDENCE:     'Low Extraction Confidence',
-  DUPLICATE_EXACT:    'Exact Duplicate Invoice',
-  DUPLICATE_PROBABLE: 'Probable Duplicate Invoice',
-  BANKING_CHANGE:     'Banking Information Changed',
-  MC_DIVERGENCE:      'MC# Name Mismatch (FMCSA)',
-  AUTHORITY_INACTIVE: 'Carrier Authority Inactive',
-  RATE_CONFIRMATION_MISMATCH: 'Rate Confirmation Mismatch',
-  UNSUPPORTED_ACCESSORIAL: 'Unsupported Accessorial Charge',
-  UNBILLED_ACCESSORIAL: 'Potential Unbilled Accessorial Revenue',
-};
+import { ruleLabel } from './rule-labels.js';
 
 export function buildReport(
   invoices: InvoiceRecord[],
@@ -29,7 +18,7 @@ export function buildReport(
   const reportExceptions: ReportException[] = exceptions.map(ex => ({
     invoice_id:      ex.invoice_id,
     tipo_regra:      ex.tipo_regra,
-    rule_label:      RULE_LABELS[ex.tipo_regra] ?? ex.tipo_regra,
+    rule_label:      ruleLabel(ex.tipo_regra),
     valor_envolvido: ex.valor_envolvido,
     descricao:       ex.descricao,
     source_reference: {

@@ -3,6 +3,7 @@ import { buildReport } from '../../src/report/report.builder.js';
 import { makeInvoice } from '../fixtures/invoice.fixture.js';
 import type { RuleException } from '../../src/types/rule.types.js';
 import type { AuditContext } from '../../src/types/carrier.types.js';
+import { RULE_LABELS, ruleLabel } from '../../src/report/rule-labels.js';
 
 const ctx: AuditContext = {
   run_id:       'test-run-abc',
@@ -64,6 +65,18 @@ describe('buildReport', () => {
     ];
     const report = buildReport([inv], exceptions, ctx);
     expect(report.exceptions[0].rule_label).toBe('Exact Duplicate Invoice');
+  });
+
+  it('provides a customer-facing label for every rule name', () => {
+    expect(Object.keys(RULE_LABELS)).toHaveLength(9);
+    for (const [code, label] of Object.entries(RULE_LABELS)) {
+      expect(ruleLabel(code)).toBe(label);
+      expect(label).not.toMatch(/^[A-Z0-9_]+$/);
+    }
+  });
+
+  it('humanizes unknown future rule names', () => {
+    expect(ruleLabel('NEW_RISK_TYPE')).toBe('New Risk Type');
   });
 
   it('maps source_file and source_page into source_reference', () => {
