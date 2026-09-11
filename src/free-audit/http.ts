@@ -8,6 +8,7 @@ import {HttpError,readBody} from '../security/http.js';
 import {verifyTurnstile} from '../security/turnstile.js';
 import {freeAuditObjectKey,putInvoiceObject,deleteInvoiceObjects} from '../storage/r2.js';
 import {sendSecurityEmail} from '../notifications/security.sender.js';
+import {notifyLeadFunnel} from '../notifications/google-chat.sender.js';
 import * as repository from './repository.js';
 import {freeAuditCsv,freeAuditPdf,repeatOfferEmail,verificationEmail} from './artifacts.js';
 import {failure,info,requestId,warn} from '../observability/logger.js';
@@ -237,6 +238,7 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     const token=randomBytes(32).toString('base64url');
     const registered=await repository.registerRequest({email:input.email,name:input.name,company:input.company,phone:input.phone,loads:input.loads_per_month,tokenHash:tokenHash(token),ipFingerprint:privacyKey(ip)});
     info('free_audit.request.registered',{request_id:traceId,audit_request_id:registered.request_id,action:registered.action,submitted_files:files.length});
+    void notifyLeadFunnel({stage:'audit_requested',requestId:registered.request_id,email:input.email,company:input.company,name:input.name,metadata:{action:registered.action,submitted_files:files.length,loads_per_month:input.loads_per_month??null}}).catch(()=>{});
     if(registered.action==='repeat'){
      if(registered.offer_allowed){const offer=repeatOfferEmail(input.name,config.offerUrl);try{await sendSecurityEmail({to:input.email,...offer,idempotencyKey:`free-audit-offer-${registered.request_id}-${registered.offer_number}`});}catch(error){await repository.releaseOffer(registered.request_id,registered.offer_number);throw error;}}
      info('free_audit.offer.completed',{request_id:traceId,audit_request_id:registered.request_id,email_sent:registered.offer_allowed});respond(res,202,{accepted:true,message:'Check your email for the next step.'});return true;

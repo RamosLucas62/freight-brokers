@@ -35,9 +35,13 @@ FREE_AUDIT_ORIGIN=https://aiolympian.com
 FREE_AUDIT_ORIGINS=https://aiolympian.com,https://www.aiolympian.com
 FREE_AUDIT_PUBLIC_URL=https://api.audit.aiolympian.com
 FREE_AUDIT_OFFER_URL=https://aiolympian.com/pricing
+GOOGLE_CHAT_LEADS_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/.../messages?key=...&token=...
+GOOGLE_CHAT_ERRORS_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/.../messages?key=...&token=...
 ```
 
 `FREE_AUDIT_ORIGIN` remains the required primary browser origin. Set optional `FREE_AUDIT_ORIGINS` to a comma-separated allowlist when the form is served from more than one exact origin. No wildcard origins are accepted. `FREE_AUDIT_PUBLIC_URL` creates email-verification and secure-retry links. `FREE_AUDIT_OFFER_URL` is used by completed-audit and repeat-request emails as well as confirmation-page navigation. Set it to `https://aiolympian.com/pricing`; the customer portal remains login-only. Successful submissions intentionally return `202 Accepted`; browser `response.ok` treats that status as success.
+
+Set `GOOGLE_CHAT_LEADS_WEBHOOK_URL` to the leads space webhook and `GOOGLE_CHAT_ERRORS_WEBHOOK_URL` to the errors space webhook. Lead alerts are sent when a customer requests the free audit, receives the audit result, signs via Stripe checkout, receives each follow-up, asks to cancel, or changes plan. Error alerts are sent from the structured error logger with the best available ID, error code/event, and timestamp.
 
 ## Pricing page checkout
 
