@@ -82,9 +82,12 @@ export function verifyInvoice(input:ConfidenceInput):InvoiceVerification{
  const history=input.history??[];const configured=Number(process.env.CONFIDENCE_VERIFIED_THRESHOLD??'0.92');const threshold=Number.isFinite(configured)&&configured>=0&&configured<=1?configured:0.92;
  const fields=Object.fromEntries(FIELD_NAMES.map(field=>[field,verifyField(field,input.fields[field],input.evidence?.[field],history,threshold)]));
  const reasons:string[]=[];
- for(const field of ['numero_fatura','valor_total','carrier_name'] as const){if(fields[field].status!=='verified')reasons.push(`${field}:${fields[field].status}`);}
+ for(const field of ['numero_fatura','data_fatura','valor_total','carrier_name'] as const){if(fields[field].status!=='verified')reasons.push(`${field}:${fields[field].status}`);}
+ // MC/DOT identifiers are optional on an invoice. When one is printed, however,
+ // it must be supported by verifiable evidence before the invoice is automated.
+ const hasIdentityValue=present(input.fields.mc_number)||present(input.fields.dot_number);
  const identityVerified=fields.mc_number.status==='verified'||fields.dot_number.status==='verified';
- if(!identityVerified)reasons.push(fields.mc_number.status==='review'||fields.dot_number.status==='review'?'carrier_identifier:review':'carrier_identifier:unverifiable');
+ if(hasIdentityValue&&!identityVerified)reasons.push(fields.mc_number.status==='review'||fields.dot_number.status==='review'?'carrier_identifier:review':'carrier_identifier:unverifiable');
  // Banking is optional. It only blocks automation when present but invalid or unsupported.
  if(present(input.fields.dados_bancarios)&&fields.dados_bancarios.status!=='verified')reasons.push(`dados_bancarios:${fields.dados_bancarios.status}`);
  let status:VerificationStatus=reasons.some(reason=>reason.endsWith(':review'))?'review':reasons.length?'unverifiable':'verified';

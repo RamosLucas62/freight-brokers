@@ -37,13 +37,13 @@ describe('BANKING_CHANGE rule', () => {
     expect(result).toHaveLength(0);
   });
 
-  it('flags all invoices when carrier has multiple banking accounts', async () => {
+  it('emits one alert when a current batch has a new banking account', async () => {
     const invoices = [
       makeInvoice({ carrier_name: 'ACME LLC', dados_bancarios: bankingA }),
       makeInvoice({ carrier_name: 'ACME LLC', dados_bancarios: bankingB }),
     ];
     const result = await bankingChangeRule.evaluate(invoices, noopGetCarrier, ctx);
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(1);
     expect(result.every(e => e.tipo_regra === 'BANKING_CHANGE')).toBe(true);
   });
 
@@ -64,8 +64,21 @@ describe('BANKING_CHANGE rule', () => {
       makeInvoice({ carrier_name: 'ACME LLC', dados_bancarios: bankingC }),
     ];
     const result = await bankingChangeRule.evaluate(invoices, noopGetCarrier, ctx);
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(2);
     expect(result[0].metadata.distinct_bank_accounts).toBe(3);
+  });
+
+  it('compares current invoices with the latest historical account',async()=>{
+    const historical=makeInvoice({id:'history',carrier_name:'ACME LLC',dados_bancarios:bankingA,created_at:'2024-01-01T00:00:00Z'});
+    const current=makeInvoice({id:'current',carrier_name:'ACME LLC',dados_bancarios:bankingB,created_at:'2024-02-01T00:00:00Z'});
+    const result=await bankingChangeRule.evaluate([historical,current],noopGetCarrier,{...ctx,currentInvoiceIds:new Set(['current'])});
+    expect(result).toHaveLength(1);expect(result[0]).toMatchObject({invoice_id:'current',metadata:{baseline_source:'verified_history'}});
+  });
+
+  it('does not repeatedly alert when the current account matches latest history',async()=>{
+    const historical=makeInvoice({id:'history',carrier_name:'ACME LLC',dados_bancarios:bankingB,created_at:'2024-01-01T00:00:00Z'});
+    const current=makeInvoice({id:'current',carrier_name:'ACME LLC',dados_bancarios:bankingB,created_at:'2024-02-01T00:00:00Z'});
+    expect(await bankingChangeRule.evaluate([historical,current],noopGetCarrier,{...ctx,currentInvoiceIds:new Set(['current'])})).toHaveLength(0);
   });
 
   it('skips invoices with no carrier_name', async () => {

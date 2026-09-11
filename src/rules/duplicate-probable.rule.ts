@@ -4,6 +4,19 @@ import type { AuditContext } from '../types/carrier.types.js';
 
 const WINDOW_DAYS = 7;
 const MS_PER_DAY = 86_400_000;
+const normalized=(value:string|null)=>value?.trim().toUpperCase().replace(/[^A-Z0-9]/g,'')??'';
+
+function hasStrongShipmentLink(a:InvoiceRecord,b:InvoiceRecord):boolean{
+  const loadA=normalized(a.numero_carga),loadB=normalized(b.numero_carga);
+  if(loadA&&loadB)return loadA===loadB;
+  const originA=normalized(a.origem),originB=normalized(b.origem);
+  const destinationA=normalized(a.destino),destinationB=normalized(b.destino);
+  const routeMatches=Boolean(originA&&originB&&destinationA&&destinationB&&originA===originB&&destinationA===destinationB);
+  if(!routeMatches)return false;
+  // If load identifiers are incomplete, require a matching service date as a
+  // second independent signal before calling two invoices probable duplicates.
+  return Boolean(a.data_carga&&b.data_carga&&a.data_carga===b.data_carga);
+}
 
 export const duplicateProbableRule: IRule = {
   name: 'DUPLICATE_PROBABLE',
@@ -39,6 +52,10 @@ export const duplicateProbableRule: IRule = {
         if (isNaN(dateA) || isNaN(dateB)) continue;
         if (Math.abs(dateA - dateB) > WINDOW_DAYS * MS_PER_DAY) continue;
 
+        // Amount, carrier and a nearby date are common in recurring freight.
+        // Require a shared shipment signal to avoid flagging unrelated loads.
+        if(!hasStrongShipmentLink(a,b))continue;
+
         // Flag both
         const pairKey = [a.id, b.id].sort().join('|');
         if (flagged.has(pairKey)) continue;
@@ -58,6 +75,8 @@ export const duplicateProbableRule: IRule = {
               partner_invoice: inv.id === a.id ? b.id : a.id,
               partner_numero:  inv.id === a.id ? b.numero_fatura : a.numero_fatura,
               date_diff_days:  Math.abs(dateA - dateB) / MS_PER_DAY,
+              matching_load_number: Boolean(normalized(a.numero_carga)&&normalized(a.numero_carga)===normalized(b.numero_carga)),
+              matching_route_and_service_date: Boolean(normalized(a.origem)&&normalized(a.origem)===normalized(b.origem)&&normalized(a.destino)&&normalized(a.destino)===normalized(b.destino)&&a.data_carga&&a.data_carga===b.data_carga),
             },
           });
         }

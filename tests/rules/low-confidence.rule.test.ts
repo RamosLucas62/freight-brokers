@@ -21,6 +21,21 @@ describe('LOW_CONFIDENCE rule', () => {
     expect(await lowConfidenceRule.evaluate([makeInvoice({verification})],noopGetCarrier,ctx)).toHaveLength(0);
   });
 
+  it('does not require an MC or DOT number when neither is printed',async()=>{
+    const extracted=makeExtractionResult();extracted.fields.mc_number=null;extracted.fields.dot_number=null;
+    const evidence=Object.fromEntries(Object.entries(extracted.fields).map(([field,value])=>[field,value==null?{page:null,text:null}:{page:1,text:typeof value==='object'?`${value.account_number} ${value.routing_number}`:field==='valor_total'?'2,500.00':String(value)}]));
+    const verification=verifyInvoice({fields:extracted.fields,evidence,tenantId:'tenant',sourceId:'no-carrier-id'});
+    expect(await lowConfidenceRule.evaluate([makeInvoice({mc_number:null,dot_number:null,verification})],noopGetCarrier,ctx)).toHaveLength(0);
+  });
+
+  it('explains when the invoice date is missing',async()=>{
+    const extracted=makeExtractionResult();extracted.fields.data_fatura=null;
+    const evidence=Object.fromEntries(Object.entries(extracted.fields).map(([field,value])=>[field,value==null?{page:null,text:null}:{page:1,text:typeof value==='object'?`${value.account_number} ${value.routing_number}`:field==='valor_total'?'2,500.00':String(value)}]));
+    const verification=verifyInvoice({fields:extracted.fields,evidence,tenantId:'tenant',sourceId:'no-date'});
+    const result=await lowConfidenceRule.evaluate([makeInvoice({data_fatura:null,verification})],noopGetCarrier,ctx);
+    expect(result[0].descricao).toContain('data_fatura=unverifiable');
+  });
+
   it('returns no exceptions when all critical fields are above threshold', async () => {
     const inv = makeInvoice({
       confidence_scores: {
