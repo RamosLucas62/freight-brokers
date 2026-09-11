@@ -5,10 +5,14 @@ const money=value=>value==null?'—':new Intl.NumberFormat('en-US',{style:'curre
 const date=value=>value?new Date(value).toLocaleString('en-US',{dateStyle:'short',timeStyle:'short'}):'—';
 const invoiceDate=value=>{if(!value)return '—';const [year,month,day]=value.split('-').map(Number);return new Intl.DateTimeFormat('en-US',{month:'2-digit',day:'2-digit',year:'numeric'}).format(new Date(year,month-1,day));};
 const badge=status=>`<span class="badge ${escape(status)}">${escape(status)}</span>`;
-const riskLabels={LOW_CONFIDENCE:'Low Extraction Confidence',DUPLICATE_EXACT:'Exact Duplicate Invoice',DUPLICATE_PROBABLE:'Probable Duplicate Invoice',BANKING_CHANGE:'Banking Information Changed',MC_DIVERGENCE:'MC# Name Mismatch (FMCSA)',AUTHORITY_INACTIVE:'Carrier Authority Inactive',RATE_CONFIRMATION_MISMATCH:'Rate Confirmation Mismatch',UNSUPPORTED_ACCESSORIAL:'Unsupported Accessorial Charge',UNBILLED_ACCESSORIAL:'Potential Unbilled Accessorial Revenue'};
+const riskLabels={LOW_CONFIDENCE:'Low Extraction Confidence',DUPLICATE_EXACT:'Exact Duplicate Invoice',DUPLICATE_PROBABLE:'Probable Duplicate Invoice',BANKING_CHANGE:'Banking Information Changed',MC_DIVERGENCE:'MC# Name Mismatch (FMCSA)',AUTHORITY_INACTIVE:'Carrier Authority Inactive',CARRIER_VERIFICATION_REQUIRED:'Carrier Identification Needs Review',RATE_CONFIRMATION_MISMATCH:'Rate Confirmation Mismatch',UNSUPPORTED_ACCESSORIAL:'Unsupported Accessorial Charge',UNBILLED_ACCESSORIAL:'Potential Unbilled Accessorial Revenue'};
 const riskLabel=code=>{if(!code)return 'Invoice Risk';return riskLabels[code]??String(code).toLowerCase().split('_').filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');};
 const jobReason=(row,report)=>({
  PROCESSING_FAILED:'Processing was interrupted. Review the submission and resubmit it when the service is available.',
+ OPENROUTER_TIMEOUT_OR_NETWORK:'The document analysis provider remained unavailable after automatic retries. No manual action is needed unless the issue continues.',
+ OPENROUTER_INVALID_RESPONSE:'The document analysis provider did not return a usable result after automatic retries.',
+ FMCSA_TIMEOUT_OR_NETWORK:'FMCSA remained unavailable after automatic retries. Review the submission before trying again.',
+ FMCSA_INVALID_RESPONSE:'FMCSA did not return a usable response after automatic retries.',
  ACCOUNT_UNAVAILABLE:'Processing is paused because the account is not currently available.',
  SENDER_AUTHENTICATION_FAILED:'The sender could not be authenticated.',
  SENDER_NOT_AUTHORIZED_OR_QUOTA:'The sender is not authorized for this private intake, or the plan limit was reached.',

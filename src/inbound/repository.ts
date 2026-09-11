@@ -4,7 +4,7 @@ import type { AuditReport } from '../types/report.types.js';
 import { recipientAliases, type ReceivedEvent } from './events.js';
 import {invoiceObjectKey,putInvoiceObject} from '../storage/r2.js';
 import type {DocumentType} from '../documents/classifier.js';
-export interface InboundJob { id:string; tenant_id:string; email_id:string; }
+export interface InboundJob { id:string; tenant_id:string; email_id:string; attempts?:number; }
 export async function authorizeInbound(job:InboundJob,sender:string):Promise<void>{
  const {data,error}=await getSupabaseClient().rpc('authorize_inbound_processing',{p_tenant:job.tenant_id,p_sender:sender});
  if(error||!data)throw new Error('UNAUTHORIZED_OR_QUOTA_EXCEEDED');
@@ -23,6 +23,13 @@ export async function claim():Promise<InboundJob|null> {
 export async function finish(job:InboundJob,status:string,result:AuditReport|null,errorCode:string|null) {
  const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({status,result,error_code:errorCode,finished_at:new Date().toISOString()})
  .eq('id',job.id).eq('tenant_id',job.tenant_id).eq('status','processing');
+ if(error)throw new Error('QUEUE_UPDATE_FAILED');
+}
+export async function scheduleRetry(job:InboundJob,errorCode:string,delaySeconds:number) {
+ const nextAttemptAt=new Date(Date.now()+delaySeconds*1000).toISOString();
+ const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({
+  status:'queued',error_code:errorCode,started_at:null,finished_at:null,next_attempt_at:nextAttemptAt,
+ }).eq('id',job.id).eq('tenant_id',job.tenant_id).eq('status','processing');
  if(error)throw new Error('QUEUE_UPDATE_FAILED');
 }
 export async function saveAttachment(job:InboundJob,id:string,filename:string,bytes:Buffer) {

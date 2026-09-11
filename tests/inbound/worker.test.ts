@@ -1,6 +1,6 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
 const documentMocks=vi.hoisted(()=>({classify:vi.fn(),extractPod:vi.fn(),extractRate:vi.fn()}));
-vi.mock('../../src/inbound/repository.js',()=>({savedReport:vi.fn(),finish:vi.fn(),saveAttachment:vi.fn(),storedDocuments:vi.fn(),setDocumentType:vi.fn(),cacheExtraction:vi.fn(),cacheSupportingExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
+vi.mock('../../src/inbound/repository.js',()=>({savedReport:vi.fn(),finish:vi.fn(),scheduleRetry:vi.fn(),saveAttachment:vi.fn(),storedDocuments:vi.fn(),setDocumentType:vi.fn(),cacheExtraction:vi.fn(),cacheSupportingExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
 vi.mock('../../src/db/audit.repo.js',()=>({createAuditStore:vi.fn()}));
 vi.mock('../../src/pipeline/audit.pipeline.js',()=>({runAuditPipeline:vi.fn()}));
 vi.mock('../../src/extraction/index.js',()=>({extractor:{extract:vi.fn()}}));
@@ -12,7 +12,7 @@ import * as repo from '../../src/inbound/repository.js';
 import {createAuditStore} from '../../src/db/audit.repo.js';
 import {runAuditPipeline} from '../../src/pipeline/audit.pipeline.js';
 import {processJob} from '../../src/inbound/worker.js';
-const job={id:'11111111-1111-4111-8111-111111111111',tenant_id:'22222222-2222-4222-8222-222222222222',email_id:'33333333-3333-4333-8333-333333333333'};
+const job={id:'11111111-1111-4111-8111-111111111111',tenant_id:'22222222-2222-4222-8222-222222222222',email_id:'33333333-3333-4333-8333-333333333333',attempts:1};
 let active=vi.fn();let client:any;
 beforeEach(()=>{
  vi.resetAllMocks();documentMocks.classify.mockResolvedValue('invoice');active=vi.fn().mockResolvedValue(undefined);vi.mocked(createAuditStore).mockReturnValue({assertActive:active} as any);
@@ -32,8 +32,17 @@ describe('inbound worker',()=>{
   const options=vi.mocked(runAuditPipeline).mock.calls[0][0];expect(options.tenantId).toBe(job.tenant_id);expect(options.filePaths[0]).not.toContain('evil');expect(options.ctx.run_id).toBe(job.id);
   expect(repo.finish).toHaveBeenCalledWith(job,'completed',expect.anything(),null);
  });
- it('marks failures for review without retrying paid work',async()=>{
-  vi.mocked(runAuditPipeline).mockRejectedValue(new Error('timeout'));await processJob(job,client);expect(runAuditPipeline).toHaveBeenCalledOnce();expect(repo.finish).toHaveBeenCalledWith(job,'needs_review',null,'PROCESSING_FAILED');
+ it('automatically schedules a cached retry for a temporary provider failure',async()=>{
+  vi.mocked(runAuditPipeline).mockRejectedValue(new Error('OpenRouter request failed or timed out. No extraction returned.'));await processJob(job,client);expect(runAuditPipeline).toHaveBeenCalledOnce();
+  expect(repo.scheduleRetry).toHaveBeenCalledWith(job,'OPENROUTER_TIMEOUT_OR_NETWORK',60);expect(repo.finish).not.toHaveBeenCalledWith(job,'needs_review',expect.anything(),expect.anything());
+ });
+ it('moves a permanent processing failure to review without retrying',async()=>{
+  vi.mocked(runAuditPipeline).mockRejectedValue(new Error('Expected exactly one invoice per PDF; split the document and retry.'));await processJob(job,client);
+  expect(repo.scheduleRetry).not.toHaveBeenCalled();expect(repo.finish).toHaveBeenCalledWith(job,'needs_review',null,'PDF_INVOICE_COUNT_INVALID');
+ });
+ it('stops automatic retries after the configured backoff sequence',async()=>{
+  const exhausted={...job,attempts:4};vi.mocked(runAuditPipeline).mockRejectedValue(new Error('FMCSA request failed or timed out.'));await processJob(exhausted,client);
+  expect(repo.scheduleRetry).not.toHaveBeenCalled();expect(repo.finish).toHaveBeenCalledWith(exhausted,'needs_review',null,'FMCSA_TIMEOUT_OR_NETWORK');
  });
  it('classifies and passes POD and rate confirmation evidence to the audit pipeline',async()=>{
   const ids=['11111111-1111-4111-8111-111111111111','44444444-4444-4444-8444-444444444444','55555555-5555-4555-8555-555555555555'];

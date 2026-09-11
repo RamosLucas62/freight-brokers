@@ -43,6 +43,13 @@ describe('audit transaction boundary', () => {
     await expect(runAuditPipeline(opts)).rejects.toThrow('offline');
     expect(opts.store.commit).not.toHaveBeenCalled();
   });
+  it('completes with a carrier verification alert when FMCSA cannot identify one carrier',async()=>{
+    const opts=options();opts.getCarrier=async input=>({dot:input.dot??null,mc:input.mc??null,legal_name:null,authority_status:'UNVERIFIABLE',
+      broker_authority:false,carrier_authority:false,checked_at:new Date().toISOString(),verification_reason:'NO_UNIQUE_CARRIER'});
+    const report=await runAuditPipeline(opts);
+    expect(report.exceptions).toEqual(expect.arrayContaining([expect.objectContaining({tipo_regra:'CARRIER_VERIFICATION_REQUIRED'})]));
+    expect(opts.store.commit).toHaveBeenCalledOnce();
+  });
   it('does not save a partial batch when a later file is missing', async () => {
     const opts = options(); opts.filePaths.push(join(dir, 'missing.pdf'));
     await expect(runAuditPipeline(opts)).rejects.toThrow();

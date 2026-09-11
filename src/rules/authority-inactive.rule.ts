@@ -22,6 +22,16 @@ export const authorityInactiveRule: IRule = {
 
       const carrierData = await getCarrier(input, ctx);
 
+      if(carrierData.authority_status==='UNVERIFIABLE'){
+        exceptions.push({
+          invoice_id:inv.id,tipo_regra:'CARRIER_VERIFICATION_REQUIRED',valor_envolvido:inv.valor_total,
+          descricao:'The carrier could not be uniquely verified in FMCSA. Confirm the MC or DOT number before approving this invoice.',
+          source_file:inv.source_file,source_page:null,metadata:{mc_number:inv.mc_number,dot_number:inv.dot_number,
+            verification_reason:carrierData.verification_reason??'NO_UNIQUE_CARRIER',checked_at:carrierData.checked_at},
+        });
+        continue;
+      }
+
       const isInactive =
         carrierData.authority_status !== 'ACTIVE' ||
         !carrierData.carrier_authority;
