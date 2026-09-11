@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {IncomingMessage} from 'node:http';
+import {notifyOperationalError} from '../notifications/google-chat.sender.js';
 
 type Level='info'|'warn'|'error';
 type Fields=Record<string,unknown>;
@@ -34,6 +35,7 @@ export function log(level:Level,event:string,fields:Fields={}):void{
  const record=clean({timestamp:new Date().toISOString(),level,service:'freight-audit',event,...fields}) as Fields;
  const line=JSON.stringify(record);
  (level==='error'?process.stderr:process.stdout).write(`${line}\n`);
+ if(level==='error')void notifyOperationalError(record).catch(()=>{});
 }
 export const info=(event:string,fields:Fields={})=>log('info',event,fields);
 export const warn=(event:string,fields:Fields={})=>log('warn',event,fields);

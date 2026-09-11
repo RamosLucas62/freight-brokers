@@ -37,6 +37,7 @@ const Config=z.object({
  CSRF_SECRET:z.string().min(32),
  OPENROUTER_ALLOWED_MODELS:z.string().min(1),OPENROUTER_DATA_PROCESSING_ACK:z.literal('true'),
  FREE_AUDIT_ORIGIN:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_ORIGINS:z.string().optional(),FREE_AUDIT_PUBLIC_URL:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_OFFER_URL:z.string().url(),
+ GOOGLE_CHAT_LEADS_WEBHOOK_URL:z.string().url().optional(),GOOGLE_CHAT_ERRORS_WEBHOOK_URL:z.string().url().optional(),
 });
 const parsed=Config.safeParse(process.env);
 if(!parsed.success){failure('server.configuration.invalid',new Error('INVALID_SERVER_CONFIGURATION'),{invalid_variables:parsed.error.issues.map(i=>i.path.join('.'))});process.exit(1);}
