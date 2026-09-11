@@ -7,10 +7,11 @@ const invoiceDate=value=>{if(!value)return '—';const [year,month,day]=value.sp
 const badge=status=>`<span class="badge ${escape(status)}">${escape(status)}</span>`;
 const riskLabels={LOW_CONFIDENCE:'Low Extraction Confidence',DUPLICATE_EXACT:'Exact Duplicate Invoice',DUPLICATE_PROBABLE:'Probable Duplicate Invoice',BANKING_CHANGE:'Banking Information Changed',MC_DIVERGENCE:'MC# Name Mismatch (FMCSA)',AUTHORITY_INACTIVE:'Carrier Authority Inactive',CARRIER_VERIFICATION_REQUIRED:'Carrier Identification Needs Review',RATE_CONFIRMATION_MISMATCH:'Rate Confirmation Mismatch',UNSUPPORTED_ACCESSORIAL:'Unsupported Accessorial Charge',UNBILLED_ACCESSORIAL:'Potential Unbilled Accessorial Revenue'};
 const riskLabel=code=>{if(!code)return 'Invoice Risk';return riskLabels[code]??String(code).toLowerCase().split('_').filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');};
-const jobReason=(row,report)=>({
+const jobReason=(row={},report)=>({
  PROCESSING_FAILED:'Processing was interrupted. Review the submission and resubmit it when the service is available.',
  OPENROUTER_TIMEOUT_OR_NETWORK:'The document analysis provider remained unavailable after automatic retries. No manual action is needed unless the issue continues.',
  OPENROUTER_INVALID_RESPONSE:'The document analysis provider did not return a usable result after automatic retries.',
+ OPENROUTER_HTTP_ERROR:'The document analysis provider rejected the request. Review the document format and resubmit it; contact support if it happens again.',
  FMCSA_TIMEOUT_OR_NETWORK:'FMCSA remained unavailable after automatic retries. Review the submission before trying again.',
  FMCSA_INVALID_RESPONSE:'FMCSA did not return a usable response after automatic retries.',
  ACCOUNT_UNAVAILABLE:'Processing is paused because the account is not currently available.',
@@ -19,9 +20,9 @@ const jobReason=(row,report)=>({
  NO_PDF_ATTACHMENTS:'No supported PDF attachment was found in this email.',
  AUTOMATIC_EMAIL:'Automatic or reply-generated email ignored.',
  WORKER_INTERRUPTED:'Processing was interrupted before completion. Review before resubmitting.',
-}[row.error_code]??(row.error_code||(row.status==='completed'&&Number(report?.total_exceptions)>0
+}[row?.error_code]??(row?.error_code||(row?.status==='completed'&&Number(report?.total_exceptions)>0
  ?`Processing completed with ${Number(report.total_exceptions).toLocaleString('en-US')} item${Number(report.total_exceptions)===1?'':'s'} requiring review.`
- :row.status==='completed'?'Processing completed. No items require review.':'No processing issue reported.')));
+ :row?.status==='completed'?'Processing completed. No items require review.':'No processing issue reported.')));
 const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history',settings:'Settings & billing'};
 const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.',settings:'Choose who receives reports and keep your subscription up to date.'};
 let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null,settingsData=null;
@@ -137,7 +138,7 @@ async function load(silent=false){
  const id=++requestId;const company=$('company').value;
  if(!silent){$('table-body').innerHTML='';$('empty').hidden=false;$('empty').textContent='Loading data…';}
  $('refresh').disabled=true;
- try{const data=await api(`${view}?company=${encodeURIComponent(company)}&page=${page}`);if(id!==requestId)return;message('');$('company-name').textContent=companies.find(c=>c.id===company)?.name??'YOUR OPERATION';if(view==='settings'){settingsData=data;renderSettings();}else{rows=data.rows;total=data.total;render();}}
+ try{const data=await api(`${view}?company=${encodeURIComponent(company)}&page=${page}`);if(id!==requestId)return;message('');$('company-name').textContent=companies.find(c=>c.id===company)?.name??'YOUR OPERATION';if(view==='settings'){settingsData=data;renderSettings();}else{rows=Array.isArray(data.rows)?data.rows.filter(row=>row&&typeof row==='object'):[];const parsedTotal=Number(data.total);total=Number.isFinite(parsedTotal)?parsedTotal:rows.length;render();}}
  catch(error){if(id!==requestId)return;message(error.message);if(!silent&&view!=='settings'){rows=[];total=0;render();$('empty').textContent='Unable to load data. Select Refresh to try again.';}}
  finally{if(id===requestId)$('refresh').disabled=false;}
 }
@@ -151,7 +152,7 @@ function render(){
  $('table-head').innerHTML='<tr>'+columns[view].map(c=>`<th scope="col">${c}</th>`).join('')+'</tr>';
  $('table-body').innerHTML=filtered.map(r=>{
  const short=escape((r.id??r.run_id).slice(0,8).toUpperCase());let cells=[];
- if(view==='jobs')cells=[`AUD-${short}<small>Email ${escape(r.email_id?.slice(0,8))}</small>`,date(r.created_at),badge(r.status),r.result?`${r.result.total_exceptions??0} exception${r.result.total_exceptions===1?'':'s'}`:`<small>${escape(jobReason(r.error_code))}</small>`];
+ if(view==='jobs')cells=[`AUD-${short}<small>Email ${escape(r.email_id?.slice(0,8))}</small>`,date(r.created_at),badge(r.status),r.result?`${r.result.total_exceptions??0} exception${r.result.total_exceptions===1?'':'s'}`:`<small>${escape(jobReason(r,r.result))}</small>`];
  if(view==='invoices')cells=[`${escape(r.numero_fatura)}<small>Load ${escape(r.numero_carga)}</small>`,`${escape(r.carrier_name)}<small>MC ${escape(r.mc_number)}</small>`,`${escape(r.origem)} → ${escape(r.destino)}`,money(r.valor_total)];
  if(view==='reports')cells=[`AUD-${short}`,date(r.created_at),r.report?.total_invoices_processed??0,r.report?.total_exceptions??0,money(r.report?.valor_total_under_review)];
  if(view==='exceptions')cells=[`${escape(riskLabel(r.tipo_regra))}<small>${escape(r.resolution_status??'pending')}</small>`,escape(r.descricao?.slice(0,85)),money(r.valor_envolvido),date(r.created_at)];

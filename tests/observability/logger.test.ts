@@ -13,5 +13,6 @@ describe('structured logger',()=>{
   expect(errorFields(new Error('PDF_REJECTED_UNSAFE'))).toMatchObject({error_code:'PDF_REJECTED_UNSAFE'});
   expect(errorFields(new Error('database password leaked'))).toMatchObject({error_code:'UNCLASSIFIED_ERROR'});
   expect(errorFields(new Error('OpenRouter extraction failed (HTTP 429). Rate limit reached; retry later.'))).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:429});
+  expect(errorFields(new Error('Rate confirmation extraction failed (HTTP 400).'))).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:400});
  });
 });
