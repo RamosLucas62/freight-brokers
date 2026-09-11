@@ -9,6 +9,10 @@ describe('inbound failure policy',()=>{
   ]);
  });
  it('stops after three automatic retries',()=>expect(inboundFailureDecision(new Error('FMCSA request failed or timed out.'),'audit_pipeline',4).retry).toBe(false));
+ it('retries native timeout errors from storage and database clients',()=>{
+  const timeout=Object.assign(new Error('The operation timed out'),{name:'TimeoutError'});
+  expect(inboundFailureDecision(timeout,'store_attachment',1)).toMatchObject({retry:true,errorCode:'NETWORK_TIMEOUT'});
+ });
  it('retries rate limits and server errors but not invalid customer documents',()=>{
   expect(inboundFailureDecision(new Error('OpenRouter extraction failed (HTTP 429). Rate limit reached; retry later.'),'audit_pipeline',1).retry).toBe(true);
   expect(inboundFailureDecision(new Error('Expected exactly one invoice per PDF; split the document and retry.'),'audit_pipeline',1).retry).toBe(false);

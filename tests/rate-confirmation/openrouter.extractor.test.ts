@@ -26,6 +26,14 @@ describe('rate confirmation extraction',()=>{
   expect(request).toHaveBeenCalledTimes(2);expect(JSON.parse(request.mock.calls[1][1].body).response_format).toBeUndefined();
   expect(result.raw).toMatchObject({structured_output_fallback:true,initial_provider_reason:'STRUCTURED_OUTPUT_REJECTED'});
  });
+ it('normalizes the safe aliases and pixel evidence returned by the live fallback',async()=>{
+  const file=await pdf();
+  const liveFallback={fields:{load_id:{value:'LOAD-RC002',confidence:0.96,evidence:{page:1,text:'LOAD-RC002',bounding_box:[300,388,313,451]}},carrier:{value:'Blue Lantern Test Logistics LLC',confidence:0.82,evidence:{page:1,text:'Blue Lantern Test Logistics LLC',bounding_box:[183,388,196,549]}},origin:field('Chicago, IL'),destination:field('Dallas, TX'),linehaul:{value:1800,confidence:0.99,evidence:{page:1,text:'$1,800.00',bounding_box:[405,710,418,765]}},total:{value:1800,confidence:0.99,evidence:{page:1,text:'$1,800.00',bounding_box:[439,712,452,767]}}},accessorials:[]};
+  const request=vi.fn().mockResolvedValueOnce(Response.json({error:{message:'Invalid response_format JSON schema'}},{status:400})).mockResolvedValueOnce(success('```json\n'+JSON.stringify(liveFallback)+'\n```'));
+  const result=await new OpenRouterRateConfirmationExtractor(request).extract(file);
+  expect(result.fields).toMatchObject({load_number:{value:'LOAD-RC002',evidence:{bounding_box:null}},carrier_name:{value:'Blue Lantern Test Logistics LLC'},linehaul_amount:{value:1800},total_amount:{value:1800},accessorials:[]});
+  expect(result.requires_human_review).toBe(true);
+ });
  it('keeps a sanitized provider reason when both attempts are rejected',async()=>{
   const file=await pdf();const request=vi.fn()
    .mockResolvedValueOnce(Response.json({error:{message:'JSON schema is unsupported'}},{status:400}))
