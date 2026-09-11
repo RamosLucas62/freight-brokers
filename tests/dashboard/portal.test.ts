@@ -1,7 +1,7 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {createApp} from '../../src/http/app.js';
-const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,guideCompletedAt:null as string|null,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),retrieveSubscription:vi.fn(),sendSecurityEmail:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),gte:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
-vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,signInWithOtp:mocks.otp}})}));
+const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,guideCompletedAt:null as string|null,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),refreshSession:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),retrieveSubscription:vi.fn(),sendSecurityEmail:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),gte:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
+vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,refreshSession:mocks.refreshSession,signInWithOtp:mocks.otp}})}));
 vi.mock('../../src/config/supabase.js',()=>({timedFetch:globalThis.fetch,getSupabaseClient:()=>({from:mocks.from,rpc:mocks.rpc,auth:{admin:{createUser:mocks.createUser,generateLink:mocks.generateLink}}})}));
 vi.mock('../../src/billing/stripe.js',()=>({retrieveCheckoutSession:mocks.retrieveCheckout,retrieveSubscription:mocks.retrieveSubscription,applyRetentionDiscount:vi.fn(),cancelSubscriptionAtPeriodEnd:vi.fn(),createBillingPortalSession:vi.fn(),pauseSubscriptionOneMonth:vi.fn()}));
 vi.mock('../../src/notifications/security.sender.js',()=>({sendSecurityEmail:mocks.sendSecurityEmail}));
@@ -10,6 +10,7 @@ let server:ReturnType<typeof createApp>,base:string;
 beforeEach(async()=>{
  vi.resetAllMocks();mocks.isAdmin=false;mocks.enabled=true;mocks.guideCompletedAt=null;vi.stubEnv('PORTAL_URL','https://portal.example.com');vi.stubEnv('SUPABASE_ANON_KEY','public-key');vi.stubEnv('SUPABASE_URL','https://example.supabase.co');
  mocks.getUser.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'}},error:null});
+ mocks.refreshSession.mockResolvedValue({data:{user:null,session:null},error:{message:'invalid refresh token'}});
  mocks.retrieveSubscription.mockResolvedValue({id:'sub_1',status:'active',customer:'cus_1',trial_end:null});
  mocks.otp.mockResolvedValue({error:null});mocks.rpc.mockResolvedValue({error:null});
  mocks.generateLink.mockResolvedValue({data:{properties:{action_link:'https://example.supabase.co/auth/v1/verify?token=private'}},error:null});
@@ -26,6 +27,18 @@ it('serves accessible static login and a re-openable product guide with restrict
 it('serves a dedicated post-onboarding thank-you page',async()=>{const r=await fetch(base+'/onboarding/thanks');expect(r.status).toBe(200);const html=await r.text();expect(html).toContain('Thank you.');expect(html).toContain('Check your inbox.');});
 it('rejects requests without a session before reading customer data',async()=>{const r=await fetch(base+'/api/portal/jobs?company='+tenant);expect(r.status).toBe(401);expect(mocks.from).not.toHaveBeenCalled();});
 it('rejects expired sessions',async()=>{mocks.getUser.mockResolvedValue({data:{user:null},error:{}});const r=await fetch(base+'/api/portal/me',{headers});expect(r.status).toBe(401);expect(mocks.from).not.toHaveBeenCalled();});
+it('restores a returning customer from the long-lived refresh cookie',async()=>{
+ mocks.refreshSession.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'},session:{user:{id:'user-1',email:'client@example.com'},access_token:'renewed-access',refresh_token:'rotated-refresh'}},error:null});
+ const r=await fetch(base+'/api/portal/me',{headers:{Cookie:'audit_refresh=existing-refresh'}});
+ expect(r.status).toBe(200);expect(mocks.refreshSession).toHaveBeenCalledWith({refresh_token:'existing-refresh'});
+ const cookies=r.headers.get('set-cookie')??'';expect(cookies).toContain('audit_session=renewed-access');expect(cookies).toContain('audit_refresh=rotated-refresh');
+});
+it('refreshes an expired access token without asking for another magic link',async()=>{
+ mocks.getUser.mockResolvedValue({data:{user:null},error:{message:'expired'}});
+ mocks.refreshSession.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'},session:{user:{id:'user-1',email:'client@example.com'},access_token:'renewed-access',refresh_token:'rotated-refresh'}},error:null});
+ const r=await fetch(base+'/api/portal/me',{headers:{Cookie:'audit_session=expired-token; audit_refresh=existing-refresh'}});
+ expect(r.status).toBe(200);expect(mocks.refreshSession).toHaveBeenCalledTimes(1);
+});
 it('shows the guide on first login and hides it after completion',async()=>{let r=await fetch(base+'/api/portal/me',{headers});expect(r.status).toBe(200);expect(await r.json()).toMatchObject({show_guide:true});mocks.guideCompletedAt='2026-09-10T12:00:00.000Z';r=await fetch(base+'/api/portal/me',{headers});expect(await r.json()).toMatchObject({show_guide:false});});
 it('records guide completion for the authenticated customer',async()=>{mocks.rpc.mockResolvedValue({data:'2026-09-10T12:00:00.000Z',error:null});const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(200);expect(await r.json()).toMatchObject({ok:true});expect(mocks.rpc).toHaveBeenCalledWith('portal_complete_guide');});
 it('does not expose the customer guide action in administrator mode',async()=>{mocks.isAdmin=true;const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_complete_guide');});

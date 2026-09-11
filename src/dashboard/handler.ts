@@ -108,7 +108,8 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const cookieName=(name:string)=>process.env.NODE_ENV==='production'?`__Host-${name}`:name;
  const cookieValue=(name:string,token:string,seconds:number)=>`${cookieName(name)}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${seconds}${secure}`;
  const csrfCookie=(token:string,seconds:number)=>`${cookieName('audit_csrf')}=${encodeURIComponent(token)}; SameSite=Strict; Path=/; Max-Age=${seconds}${secure}`;
- const cookie=(token:string,seconds:number)=>res.setHeader('Set-Cookie',cookieValue('audit_session',token,seconds));
+ const readCookie=(name:string)=>{const key=cookieName(name);const raw=req.headers.cookie?.split(';').map(c=>c.trim()).find(c=>c.startsWith(`${key}=`))?.slice(key.length+1);return raw?decodeURIComponent(raw):'';};
+ const clearSession=()=>res.setHeader('Set-Cookie',[cookieValue('audit_session','',0),cookieValue('audit_refresh','',0),csrfCookie('',0)]);
  if(url.pathname==='/api/portal/login'&&req.method==='POST'){
  const input=z.object({email:z.string().email().max(254),turnstile_token:z.string().max(4096).optional()}).parse(await body(req));
  if(!(await take({scope:'login-ip',limit:5,windowSeconds:900,failClosed:true})))return true;
@@ -181,18 +182,31 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(error||!data.user){send(401,{error:'Invalid or expired link. Request a new link.'});return true;}
  res.setHeader('Set-Cookie',[cookieValue('audit_session',access_token,3600),cookieValue('audit_refresh',refresh_token??'',refresh_token?604800:0),csrfCookie(csrfToken(access_token),3600)]);send(200,{ok:true});return true;
  }
- const sessionName=cookieName('audit_session');const raw=req.headers.cookie?.split(';').map(c=>c.trim()).find(c=>c.startsWith(`${sessionName}=`))?.slice(sessionName.length+1);
- const token=raw?decodeURIComponent(raw):'';
- if(!token){send(401,{error:'Sign in with your email to continue.'});return true;}
- if(req.method==='POST'&&!validCsrf(req,token)){send(403,{error:'Security token is missing or expired. Refresh the page and try again.'});return true;}
- if(url.pathname==='/api/portal/logout'&&req.method==='POST'){res.setHeader('Set-Cookie',[cookieValue('audit_session','',0),cookieValue('audit_refresh','',0),csrfCookie('',0)]);send(200,{ok:true});return true;}
- const {data:user,error:authError}=await auth().auth.getUser(token);
- if(authError||!user.user){cookie('',0);send(401,{error:'Your session has expired. Request a new sign-in link.'});return true;}
+ let token=readCookie('audit_session');const refreshToken=readCookie('audit_refresh');
+ if(url.pathname==='/api/portal/logout'&&req.method==='POST'){
+  if(token&&!validCsrf(req,token)){send(403,{error:'Security token is missing or expired. Refresh the page and try again.'});return true;}
+  clearSession();send(200,{ok:true});return true;
+ }
+ if(req.method==='POST'&&(!token||!validCsrf(req,token))){send(403,{error:'Security token is missing or expired. Refresh the page and try again.'});return true;}
+ const sessionAuth=auth();
+ let authResult=token?await sessionAuth.auth.getUser(token):{data:{user:null},error:null};
+ if((authResult.error||!authResult.data.user)&&refreshToken){
+  const refreshed=await sessionAuth.auth.refreshSession({refresh_token:refreshToken});
+  const refreshedUser=refreshed.data.user??refreshed.data.session?.user??null;
+  const refreshedAccess=refreshed.data.session?.access_token??'';
+  if(!refreshed.error&&refreshedUser&&refreshedAccess){
+   token=refreshedAccess;authResult={data:{user:refreshedUser},error:null};
+   const rotatedRefresh=refreshed.data.session?.refresh_token??refreshToken;
+   res.setHeader('Set-Cookie',[cookieValue('audit_session',token,3600),cookieValue('audit_refresh',rotatedRefresh,604800),csrfCookie(csrfToken(token),3600)]);
+  }
+ }
+ const user=authResult.data;
+ if(authResult.error||!user.user||!token){clearSession();send(401,{error:refreshToken?'Your session has expired. Request a new sign-in link.':'Sign in with your email to continue.'});return true;}
  const serviceDb=getSupabaseClient();
  const role=await serviceDb.from('audit_admins').select('user_id').eq('user_id',user.user.id).maybeSingle();
  const access=await serviceDb.from('audit_portal_users').select('enabled,guide_completed_at').eq('user_id',user.user.id).maybeSingle();
  if(role.error||access.error)throw new Error('Access lookup failed');
- if(access.data?.enabled===false){cookie('',0);send(401,{error:'Your portal access has been disabled. Contact your account administrator.'});return true;}
+ if(access.data?.enabled===false){clearSession();send(401,{error:'Your portal access has been disabled. Contact your account administrator.'});return true;}
  const isAdmin=Boolean(role.data);
  // Customer reads are enforced by the user's JWT and database RLS. The service
  // role remains limited to audited RPC mutations and global administrator views.
