@@ -28,7 +28,9 @@ export function errorFields(error:unknown):Fields{
  const upstreamMatch=error.message.match(/HTTP (\d{3})/i);
  const status=typeof error==='object'&&error!==null&&'$metadata' in error
   ?(error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode:undefined;
- return {error_code:safeCode,error_type:error.name,...(status||upstreamMatch?{upstream_status:status??Number(upstreamMatch?.[1])}:{})};
+ const providerReason='providerReason' in error&&typeof (error as {providerReason?:unknown}).providerReason==='string'?(error as {providerReason:string}).providerReason:undefined;
+ const providerCode='providerCode' in error&&typeof (error as {providerCode?:unknown}).providerCode==='string'?(error as {providerCode:string}).providerCode:undefined;
+ return {error_code:safeCode,error_type:error.name,...(status||upstreamMatch?{upstream_status:status??Number(upstreamMatch?.[1])}:{}),...(providerReason?{provider_reason:providerReason}:{}),...(providerCode?{provider_code:providerCode}:{})};
 }
 
 export function log(level:Level,event:string,fields:Fields={}):void{

@@ -39,7 +39,7 @@ describe('DUPLICATE_PROBABLE rule', () => {
     expect(result).toHaveLength(0);
   });
 
-  it('flags both invoices when same carrier, amount, and within 7 days with different numbers', async () => {
+  it('flags both invoices when the same load also has the same carrier, amount, and nearby dates', async () => {
     const invoices = [
       makeInvoice({ numero_fatura: 'INV-001', carrier_name: 'CARRIER A', valor_total: 1000, data_fatura: '2024-01-01' }),
       makeInvoice({ numero_fatura: 'INV-002', carrier_name: 'CARRIER A', valor_total: 1000, data_fatura: '2024-01-05' }),
@@ -47,6 +47,22 @@ describe('DUPLICATE_PROBABLE rule', () => {
     const result = await duplicateProbableRule.evaluate(invoices, noopGetCarrier, ctx);
     expect(result).toHaveLength(2);
     expect(result.every(e => e.tipo_regra === 'DUPLICATE_PROBABLE')).toBe(true);
+  });
+
+  it('does not flag recurring amounts from different loads',async()=>{
+    const invoices=[
+      makeInvoice({numero_fatura:'INV-101',numero_carga:'LOAD-101',carrier_name:'CARRIER A',valor_total:1000,data_fatura:'2024-01-01'}),
+      makeInvoice({numero_fatura:'INV-102',numero_carga:'LOAD-102',carrier_name:'CARRIER A',valor_total:1000,data_fatura:'2024-01-02'}),
+    ];
+    expect(await duplicateProbableRule.evaluate(invoices,noopGetCarrier,ctx)).toHaveLength(0);
+  });
+
+  it('uses matching route and service date when a load number is unavailable',async()=>{
+    const invoices=[
+      makeInvoice({numero_fatura:'INV-201',numero_carga:null,carrier_name:'CARRIER A',valor_total:1000,data_fatura:'2024-01-01',data_carga:'2023-12-31',origem:'Austin, TX',destino:'Dallas, TX'}),
+      makeInvoice({numero_fatura:'INV-202',numero_carga:null,carrier_name:'CARRIER A',valor_total:1000,data_fatura:'2024-01-02',data_carga:'2023-12-31',origem:'Austin TX',destino:'Dallas TX'}),
+    ];
+    expect(await duplicateProbableRule.evaluate(invoices,noopGetCarrier,ctx)).toHaveLength(2);
   });
 
   it('does not flag same number (handled by DUPLICATE_EXACT)', async () => {

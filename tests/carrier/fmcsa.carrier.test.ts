@@ -6,6 +6,7 @@ afterEach(() => vi.unstubAllEnvs());
 describe('FMCSA adapter', () => {
   it('maps active carrier authority', () => expect(mapFmcsaResponse({ content: { carrier } }, { dot: '123456' }).authority_status).toBe('ACTIVE'));
   it('does not infer active status from missing authority fields', () => expect(mapFmcsaResponse({ content: { carrier: { dotNumber: 123456, legalName: 'Acme' } } }, {}).authority_status).toBe('UNVERIFIABLE'));
+  it('maps carrier authority even when independent broker authority is absent',()=>expect(mapFmcsaResponse({content:{carrier:{dotNumber:123456,legalName:'Acme',commonAuthorityStatus:'I',contractAuthorityStatus:'N'}}},{dot:'123456'})).toMatchObject({authority_status:'INACTIVE',carrier_authority:false,broker_authority:false}));
   it('turns an ambiguous carrier response into reviewable evidence', () => expect(mapFmcsaResponse({ content: [{ carrier }, { carrier }] }, {mc:'777777'})).toMatchObject({authority_status:'UNVERIFIABLE',verification_reason:'NO_UNIQUE_CARRIER',mc:'777777'}));
   it('uses the documented MC endpoint', async () => {
     vi.stubEnv('FMCSA_API_KEY', 'test');

@@ -24,10 +24,11 @@ export const lowConfidenceRule: IRule = {
       if(inv.verification){
         for(const [field,result] of Object.entries(inv.verification.fields)){
           if(result.status==='review')lowFields.push(`${field}=review`);
-          else if(result.status==='unverifiable'&&['numero_fatura','valor_total','carrier_name'].includes(field))lowFields.push(`${field}=unverifiable`);
+          else if(result.status==='unverifiable'&&['numero_fatura','data_fatura','valor_total','carrier_name'].includes(field))lowFields.push(`${field}=unverifiable`);
         }
+        const identifierPresent=Boolean(inv.mc_number?.trim()||inv.dot_number?.trim());
         const hasIdentifier=inv.verification.fields.mc_number?.status==='verified'||inv.verification.fields.dot_number?.status==='verified';
-        if(!hasIdentifier)lowFields.push('carrier_identifier=unverifiable');
+        if(identifierPresent&&!hasIdentifier)lowFields.push('carrier_identifier=unverifiable');
         if(inv.dados_bancarios&&inv.verification.fields.dados_bancarios?.status!=='verified')lowFields.push(`dados_bancarios=${inv.verification.fields.dados_bancarios?.status??'unverifiable'}`);
         if(lowFields.length){exceptions.push({invoice_id:inv.id,tipo_regra:'LOW_CONFIDENCE',valor_envolvido:inv.valor_total,descricao:`Verification required for: ${[...new Set(lowFields)].join(', ')}`,source_file:inv.source_file,source_page:null,metadata:{low_fields:[...new Set(lowFields)],verification_status:inv.verification.status,confidence:inv.verification.confidence}});}
         continue;

@@ -21,7 +21,7 @@ export const bankingChangeRule: IRule = {
   async evaluate(
     invoices: InvoiceRecord[],
     _getCarrier: GetCarrierFn,
-    _ctx: AuditContext
+    ctx: AuditContext
   ): Promise<RuleException[]> {
     // Group invoices by carrier_name
     const byCarrier = new Map<string, InvoiceRecord[]>();
@@ -39,29 +39,34 @@ export const bankingChangeRule: IRule = {
     for (const [carrier, group] of byCarrier.entries()) {
       if (group.length < 2) continue;
 
-      // Find all distinct banking fingerprints
-      const fingerprintMap = new Map<string, InvoiceRecord>();
-      for (const inv of group) {
-        const fp = bankingKey(inv.dados_bancarios);
-        fingerprintMap.set(fp, inv);
-      }
+      const currentIds=ctx.currentInvoiceIds;
+      const current=currentIds?group.filter(inv=>currentIds.has(inv.id)):group;
+      const history=currentIds?group.filter(inv=>!currentIds.has(inv.id)):[];
+      if(!current.length)continue;
+      const byCreated=(a:InvoiceRecord,b:InvoiceRecord)=>a.created_at.localeCompare(b.created_at)||a.id.localeCompare(b.id);
+      const latestHistorical=[...history].sort(byCreated).at(-1);
+      const orderedCurrent=[...current].sort(byCreated);
+      const baselineFingerprint=bankingKey((latestHistorical??orderedCurrent[0]).dados_bancarios);
+      const distinctFingerprints=new Set(group.map(inv=>bankingKey(inv.dados_bancarios)));
+      if(distinctFingerprints.size<=1)continue;
 
-      if (fingerprintMap.size <= 1) continue;
-
-      // Multiple distinct banking details for same carrier
-      for (const inv of group) {
-        const fp = bankingKey(inv.dados_bancarios);
+      // Emit one finding for each newly observed account, not one finding for
+      // every invoice in the comparison set. This prevents duplicate alerts.
+      const representatives=new Map<string,InvoiceRecord>();
+      for(const inv of orderedCurrent){const fp=bankingKey(inv.dados_bancarios);if(fp!==baselineFingerprint&&!representatives.has(fp))representatives.set(fp,inv);}
+      for (const [fp,inv] of representatives) {
         exceptions.push({
           invoice_id:      inv.id,
           tipo_regra:      'BANKING_CHANGE',
           valor_envolvido: inv.valor_total,
-          descricao:       `Banking details changed for carrier "${carrier}" — ${fingerprintMap.size} distinct accounts detected`,
+          descricao:       `Banking details changed for carrier "${carrier}" — ${distinctFingerprints.size} distinct accounts detected`,
           source_file:     inv.source_file,
           source_page:     null,
           metadata:        {
             carrier_name:         carrier,
-            distinct_bank_accounts: fingerprintMap.size,
+            distinct_bank_accounts: distinctFingerprints.size,
             this_fingerprint:     createHash('sha256').update(fp).digest('hex'),
+            baseline_source:latestHistorical?'verified_history':'current_batch',
           },
         });
       }

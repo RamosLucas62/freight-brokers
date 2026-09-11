@@ -14,5 +14,7 @@ describe('structured logger',()=>{
   expect(errorFields(new Error('database password leaked'))).toMatchObject({error_code:'UNCLASSIFIED_ERROR'});
   expect(errorFields(new Error('OpenRouter extraction failed (HTTP 429). Rate limit reached; retry later.'))).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:429});
   expect(errorFields(new Error('Rate confirmation extraction failed (HTTP 400).'))).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:400});
+  const providerError=Object.assign(new Error('Rate confirmation extraction failed (HTTP 402).'),{providerReason:'INSUFFICIENT_CREDITS',providerCode:'payment_required'});
+  expect(errorFields(providerError)).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:402,provider_reason:'INSUFFICIENT_CREDITS',provider_code:'payment_required'});
  });
 });

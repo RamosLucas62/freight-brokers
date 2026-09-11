@@ -12,15 +12,18 @@ export function mapFmcsaResponse(data: unknown, input: CarrierLookupInput): Carr
   const carrier = (entries[0] as { carrier?: Record<string, unknown> }).carrier;
   if (!carrier || !carrier.dotNumber || typeof carrier.legalName !== 'string') return unverifiable('INVALID_RESPONSE');
   if (input.dot && String(carrier.dotNumber) !== input.dot) return unverifiable('IDENTIFIER_MISMATCH');
-  const codes = [carrier.commonAuthorityStatus, carrier.contractAuthorityStatus, carrier.brokerAuthorityStatus];
-  if (codes.some(code => typeof code !== 'string' || !['A', 'I', 'N'].includes(code))) {
+  const validAuthorityCode=(code:unknown):code is string=>typeof code==='string'&&['A','I','N'].includes(code);
+  const carrierCodes=[carrier.commonAuthorityStatus,carrier.contractAuthorityStatus];
+  // Broker authority is independent from motor-carrier authority and is often
+  // absent from otherwise valid carrier records.
+  if (carrierCodes.some(code=>!validAuthorityCode(code))) {
     return unverifiable('AUTHORITY_UNAVAILABLE');
   }
-  const carrierAuthority = codes[0] === 'A' || codes[1] === 'A';
+  const carrierAuthority = carrierCodes.some(code=>code==='A');
   return {
     dot: String(carrier.dotNumber), mc: input.mc ?? null, legal_name: carrier.legalName,
     authority_status: carrierAuthority ? 'ACTIVE' : 'INACTIVE',
-    broker_authority: codes[2] === 'A', carrier_authority: carrierAuthority, checked_at: new Date().toISOString(),
+    broker_authority: carrier.brokerAuthorityStatus === 'A', carrier_authority: carrierAuthority, checked_at: new Date().toISOString(),
   };
 }
 
