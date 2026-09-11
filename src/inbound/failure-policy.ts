@@ -13,7 +13,7 @@ export function inboundFailureDecision(error:unknown,stage:string,attempt=1):Inb
   const fields=errorFields(error);const code=String(fields.error_code??'UNKNOWN_ERROR');const status=Number(fields.upstream_status??0);
   const message=error instanceof Error?error.message:'';
   const temporaryCode=new Set([
-    'OPENROUTER_TIMEOUT_OR_NETWORK','OPENROUTER_INVALID_RESPONSE','FMCSA_TIMEOUT_OR_NETWORK','FMCSA_INVALID_RESPONSE',
+    'NETWORK_TIMEOUT','OPENROUTER_TIMEOUT_OR_NETWORK','OPENROUTER_INVALID_RESPONSE','FMCSA_TIMEOUT_OR_NETWORK','FMCSA_INVALID_RESPONSE',
   ]).has(code);
   const temporaryHttp=PROVIDER_STAGES.has(stage)&&
     (status===408||status===425||status===429||status>=500);

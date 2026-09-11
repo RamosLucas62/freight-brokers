@@ -16,5 +16,6 @@ describe('structured logger',()=>{
   expect(errorFields(new Error('Rate confirmation extraction failed (HTTP 400).'))).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:400});
   const providerError=Object.assign(new Error('Rate confirmation extraction failed (HTTP 402).'),{providerReason:'INSUFFICIENT_CREDITS',providerCode:'payment_required'});
   expect(errorFields(providerError)).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:402,provider_reason:'INSUFFICIENT_CREDITS',provider_code:'payment_required'});
+  expect(errorFields(Object.assign(new Error('The operation timed out'),{name:'TimeoutError'}))).toMatchObject({error_code:'NETWORK_TIMEOUT',error_type:'TimeoutError'});
  });
 });
