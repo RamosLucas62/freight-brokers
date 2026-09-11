@@ -5,8 +5,8 @@ const ctx = { run_id: 'test', carrierCache: new Map(), cacheTtlHours: 4 };
 afterEach(() => vi.unstubAllEnvs());
 describe('FMCSA adapter', () => {
   it('maps active carrier authority', () => expect(mapFmcsaResponse({ content: { carrier } }, { dot: '123456' }).authority_status).toBe('ACTIVE'));
-  it('does not infer active status from missing authority fields', () => expect(() => mapFmcsaResponse({ content: { carrier: { dotNumber: 123456, legalName: 'Acme' } } }, {})).toThrow('unavailable'));
-  it('rejects ambiguous carrier responses', () => expect(() => mapFmcsaResponse({ content: [{ carrier }, { carrier }] }, {})).toThrow('unique'));
+  it('does not infer active status from missing authority fields', () => expect(mapFmcsaResponse({ content: { carrier: { dotNumber: 123456, legalName: 'Acme' } } }, {}).authority_status).toBe('UNVERIFIABLE'));
+  it('turns an ambiguous carrier response into reviewable evidence', () => expect(mapFmcsaResponse({ content: [{ carrier }, { carrier }] }, {mc:'777777'})).toMatchObject({authority_status:'UNVERIFIABLE',verification_reason:'NO_UNIQUE_CARRIER',mc:'777777'}));
   it('uses the documented MC endpoint', async () => {
     vi.stubEnv('FMCSA_API_KEY', 'test');
     const request = vi.fn().mockResolvedValue(Response.json({ content: [{ carrier }] }));

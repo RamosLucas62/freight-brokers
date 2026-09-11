@@ -47,6 +47,12 @@ describe('AUTHORITY_INACTIVE rule', () => {
     expect(result[0].metadata.carrier_authority).toBe(false);
   });
 
+  it('creates a carrier verification alert instead of an inactive accusation when FMCSA is ambiguous',async()=>{
+    const inv=makeInvoice({mc_number:'123456'});const getCarrier=makeGetCarrier({authority_status:'UNVERIFIABLE',carrier_authority:false,verification_reason:'NO_UNIQUE_CARRIER'});
+    const result=await authorityInactiveRule.evaluate([inv],getCarrier,ctx);
+    expect(result).toHaveLength(1);expect(result[0]).toMatchObject({tipo_regra:'CARRIER_VERIFICATION_REQUIRED',metadata:{verification_reason:'NO_UNIQUE_CARRIER'}});
+  });
+
   it('skips invoices with no mc_number and no dot_number', async () => {
     const inv = makeInvoice({ mc_number: null, dot_number: null });
     const getCarrier = makeGetCarrier({ authority_status: 'INACTIVE' });

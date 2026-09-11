@@ -35,7 +35,8 @@ export async function findFreshLookup(
     dot:               row.dot_number,
     mc:                row.mc_number,
     legal_name:        row.legal_name,
-    authority_status:  row.authority_status as 'ACTIVE' | 'INACTIVE' | 'REVOKED',
+    authority_status:  row.authority_status as CarrierLookupResult['authority_status'],
+    verification_reason: row.verification_reason as CarrierLookupResult['verification_reason']|undefined,
     broker_authority:  row.broker_authority,
     carrier_authority: row.carrier_authority,
     checked_at:        row.checked_at,
@@ -53,6 +54,7 @@ export async function insertLookup(result: CarrierLookupResult): Promise<void> {
     authority_status:  result.authority_status,
     broker_authority:  result.broker_authority,
     carrier_authority: result.carrier_authority,
+    verification_reason: result.verification_reason??null,
     raw_response:      null,
     checked_at:        result.checked_at,
   });

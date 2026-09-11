@@ -20,7 +20,7 @@ export function errorFields(error:unknown):Fields{
  if(!(error instanceof Error))return {error_code:'UNKNOWN_ERROR',error_type:typeof error};
  const known:[RegExp,string][]=[
   [/OpenRouter request failed or timed out/i,'OPENROUTER_TIMEOUT_OR_NETWORK'],[/OpenRouter extraction failed \(HTTP (\d+)\)/i,'OPENROUTER_HTTP_ERROR'],[/OpenRouter returned an incomplete/i,'OPENROUTER_INVALID_RESPONSE'],
-  [/FMCSA request failed or timed out/i,'FMCSA_TIMEOUT_OR_NETWORK'],[/FMCSA lookup failed \(HTTP (\d+)\)/i,'FMCSA_HTTP_ERROR'],[/FMCSA lookup returned no unique carrier/i,'FMCSA_NO_UNIQUE_CARRIER'],
+  [/FMCSA request failed or timed out/i,'FMCSA_TIMEOUT_OR_NETWORK'],[/FMCSA lookup failed \(HTTP (\d+)\)/i,'FMCSA_HTTP_ERROR'],[/FMCSA returned an invalid response/i,'FMCSA_INVALID_RESPONSE'],[/FMCSA lookup returned no unique carrier/i,'FMCSA_NO_UNIQUE_CARRIER'],
   [/Expected exactly one invoice/i,'PDF_INVOICE_COUNT_INVALID'],[/Not a PDF/i,'INVALID_PDF'],[/File changed during extraction/i,'PDF_CHANGED_DURING_EXTRACTION'],[/Cross-account history rejected/i,'TENANT_ISOLATION_VIOLATION'],
  ];
  const matched=known.find(([pattern])=>pattern.test(error.message));

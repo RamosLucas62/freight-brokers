@@ -7,7 +7,8 @@ export interface CarrierLookupResult {
   dot:               string | null;
   mc:                string | null;
   legal_name:        string | null;
-  authority_status:  'ACTIVE' | 'INACTIVE' | 'REVOKED';
+  authority_status:  'ACTIVE' | 'INACTIVE' | 'REVOKED' | 'UNVERIFIABLE';
+  verification_reason?: 'NO_UNIQUE_CARRIER' | 'INVALID_RESPONSE' | 'IDENTIFIER_MISMATCH' | 'AUTHORITY_UNAVAILABLE';
   broker_authority:  boolean;
   carrier_authority: boolean;
   checked_at:        string;  // ISO 8601

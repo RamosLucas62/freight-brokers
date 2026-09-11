@@ -16,6 +16,7 @@ import {OpenRouterPodExtractor} from '../pod/openrouter.extractor.js';
 import {PodExtractionSchema} from '../pod/schema.js';
 import {OpenRouterRateConfirmationExtractor} from '../rate-confirmation/openrouter.extractor.js';
 import {RateConfirmationExtractionSchema} from '../rate-confirmation/schema.js';
+import {inboundFailureDecision} from './failure-policy.js';
 
 export async function processJob(job:repository.InboundJob,client:ResendReceivingClient) {
  let dir:string|undefined;
@@ -73,13 +74,16 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   if(attachments.length!==pdfs.length)report.warnings?.push(`${attachments.length-pdfs.length} non-PDF attachments were not processed by automatic email intake; use the POD CLI for images or spreadsheets.`);
   stage='finish_job';await repository.finish(job,'completed',report,null);info('inbound.worker.completed',{job_id:job.id,tenant_id:job.tenant_id,duration_ms:Date.now()-started,pdf_count:pdfs.length,pod_count:pods.length,rate_confirmation_count:rateConfirmations.length,invoice_count:report.total_invoices_processed,exception_count:report.total_exceptions});
  }catch(error){
-  // A failed/uncertain paid call is never automatically repeated. Review before requeueing.
   const detail=error instanceof Error?error.message:'unknown_error';
   const status=typeof error==='object' && error!==null && '$metadata' in error
    ? (error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode
    : undefined;
-  failure('inbound.worker.failed',error,{job_id:job.id,tenant_id:job.tenant_id,stage,provider_detail:/^[A-Z0-9_]{3,100}$/.test(detail)?detail:'PROVIDER_ERROR',upstream_status:status,duration_ms:Date.now()-started});
-  await repository.finish(job,'needs_review',null,'PROCESSING_FAILED');
+  const decision=inboundFailureDecision(error,stage,job.attempts??1);
+  failure('inbound.worker.failed',error,{job_id:job.id,tenant_id:job.tenant_id,stage,attempt:decision.attempt,retry_scheduled:decision.retry,provider_detail:/^[A-Z0-9_]{3,100}$/.test(detail)?detail:'PROVIDER_ERROR',upstream_status:status,duration_ms:Date.now()-started});
+  if(decision.retry){
+   await repository.scheduleRetry(job,decision.errorCode,decision.delaySeconds);
+   info('inbound.worker.retry_scheduled',{job_id:job.id,tenant_id:job.tenant_id,attempt:decision.attempt,next_attempt_seconds:decision.delaySeconds,error_code:decision.errorCode});
+  }else await repository.finish(job,'needs_review',null,decision.errorCode==='UNKNOWN_ERROR'?'PROCESSING_FAILED':decision.errorCode);
  }finally{if(dir)await rm(dir,{recursive:true,force:true});}
 }
 export function startWorker(client:ResendReceivingClient) {
