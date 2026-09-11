@@ -370,7 +370,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(table&&req.method==='GET'){
  const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);
  const {data,error,count}=await db.from(table[0]).select(table[1],{count:'exact'}).eq('tenant_id',tenant).order('created_at',{ascending:false}).order(table[0]==='audit_runs'?'run_id':'id').range(page*50,page*50+49);
- if(error)throw error;send(200,{rows:data,total:count,page});return true;
+ if(error)throw error;send(200,{rows:Array.isArray(data)?data:[],total:count??0,page});return true;
  }
  send(404,{error:'Page not found.'});
  }catch(error){failure('portal.request.failed',error,{request_id:requestId(req),path:url.pathname,method:req.method,...(operation?{operation}:{})});
