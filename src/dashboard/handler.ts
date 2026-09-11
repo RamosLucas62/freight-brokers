@@ -243,6 +243,10 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
    const result=await serviceDb.rpc('portal_admin_users',{p_actor:user.user.id,p_page:page});
    if(result.error)throw result.error;send(200,result.data);return true;
   }
+  if(url.pathname==='/api/portal/admin/confidence'&&req.method==='GET'){
+   const result=await serviceDb.rpc('portal_admin_confidence_reviews',{p_actor:user.user.id,p_page:page});
+   if(result.error)throw result.error;send(200,result.data);return true;
+  }
   const resources:Record<string,[string,string]>={companies:['audit_tenants','id,name,alias,status,is_test,created_at'],activity:['audit_admin_activity','id,actor_email,action,tenant_id,target_user_id,company_name,target_email,details,created_at']};
   const resource=resources[url.pathname.slice('/api/portal/admin/'.length)];
   if(resource&&req.method==='GET'){
@@ -347,7 +351,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   if(error){send(409,{error:'Unable to save this outcome. Please refresh and try again.'});return true;}
   send(200,{ok:true});return true;
  }
- const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at,resolution_status,avoided_amount,resolution_note,resolved_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
+ const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,verification,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at,resolution_status,avoided_amount,resolution_note,resolved_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
  const table=tables[url.pathname.split('/').pop()??''];
  if(table&&req.method==='GET'){
  const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);
