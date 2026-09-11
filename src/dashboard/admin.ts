@@ -8,9 +8,16 @@ export const AdminAction=z.discriminatedUnion('action',[
  z.object({action:z.literal('membership.remove'),user_id:z.string().uuid(),company_id:z.string().uuid()}),
  z.object({action:z.literal('user.enable'),user_id:z.string().uuid(),enabled:z.boolean()}),
  z.object({action:z.literal('user.role'),user_id:z.string().uuid(),role:z.enum(['admin','customer'])}),
+ z.object({action:z.literal('confidence.review'),id:z.string().uuid(),result:z.enum(['confirmed','corrected']),corrected_fields:z.record(z.unknown()).default({})}),
 ]);
 export async function adminAction(db:SupabaseClient,actor:string,input:unknown){
  const parsed=AdminAction.parse(input);let {action,...payload}=parsed;
+ if(action==='confidence.review'){
+  const review=parsed as Extract<z.infer<typeof AdminAction>,{action:'confidence.review'}>;
+  const result=await db.rpc('portal_admin_review_confidence',{p_actor:actor,p_review:review.id,p_result:review.result,p_corrected_fields:review.corrected_fields});
+  if(result.error)throw new Error('Unable to record this quality review. Refresh and try again.');
+  return result.data;
+ }
  if(action==='user.create'){
  const registration=parsed as Extract<z.infer<typeof AdminAction>,{action:'user.create'}>;
  // Validate company before creating an Auth identity. No email is sent here.

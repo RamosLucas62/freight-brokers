@@ -19,4 +19,8 @@ export interface AuditReport {
   valor_total_under_review: number;
   exceptions:               ReportException[];
   reconciliation?: {matched:number;divergent:number;unverifiable:number;unbilled_revenue:number;supporting_documents:number};
+  confidence?: {
+    verified:number;review:number;unverifiable:number;quality_control_samples:number;automation_rate:number;
+    field_statuses:{verified:number;review:number;unverifiable:number};
+  };
 }

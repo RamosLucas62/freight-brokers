@@ -9,7 +9,10 @@ const payload = () => ({ invoice_count: 1, fields: {
   numero_fatura: 'INV-1', numero_carga: 'LOAD-2', carrier_name: 'Carrier', mc_number: '123456',
   dot_number: null, data_carga: null, data_fatura: '2026-09-05', valor_total: 1234.5,
   origem: 'Boston', destino: 'Miami', dados_bancarios: { account_number: '001234', routing_number: '012345678', bank_name: null, account_type: null, payee_name: null },
-}, accessorials: [{ tipo: 'DETENTION', descricao: 'Detention', valor: 50, pagina: 1 }] });
+}, evidence:Object.fromEntries(['numero_fatura','numero_carga','carrier_name','mc_number','dot_number','data_carga','data_fatura','valor_total','origem','destino','dados_bancarios'].map(name=>[
+  name,
+  {page:name==='dot_number'||name==='data_carga'?null:1,text:name==='dot_number'||name==='data_carga'?null:String(name==='valor_total'?'1,234.50':name==='dados_bancarios'?'001234 012345678':name==='numero_fatura'?'INV-1':'source value')},
+])),accessorials: [{ tipo: 'DETENTION', descricao: 'Detention', valor: 50, pagina: 1 }] });
 const reply = (value: unknown = payload(), finish_reason = 'stop') => Response.json({ id: 'gen-test', model: 'test/model', choices: [{ finish_reason, message: { content: JSON.stringify(value) } }] });
 let dir: string;
 let file: string;
@@ -22,14 +25,14 @@ beforeEach(async () => {
 });
 afterEach(async () => { vi.unstubAllEnvs(); await rm(dir, { recursive: true, force: true }); });
 describe('OpenRouter extraction', () => {
-  it('sends private PDF bytes and a strict schema; preserves banking strings and flags review', async () => {
+  it('sends private PDF bytes and a strict schema; preserves banking strings and source evidence', async () => {
     const request = vi.fn().mockResolvedValue(reply());
     const result = await new OpenRouterInvoiceExtractor(request).extract(file);
     expect(ExtractionResultSchema.safeParse(result).success).toBe(true);
     expect(result.fields.dados_bancarios?.account_number).toBe('001234');
-    expect(result.confidence_scores.dados_bancarios).toBe(0.5);
-    expect(result.confidence_scores.dot_number).toBe(0);
-    expect(result.extraction_raw.requires_human_review).toBe(true);
+    expect(result.confidence_scores).toEqual({});
+    expect(result.field_evidence?.numero_fatura).toMatchObject({page:1,text:'INV-1'});
+    expect(result.extraction_raw.confidence_source).toBe('verification_engine');
     const [url, options] = request.mock.calls[0];
     expect(url).toBe('https://openrouter.ai/api/v1/chat/completions');
     expect(options.headers.Authorization).toBe('Bearer secret-test');

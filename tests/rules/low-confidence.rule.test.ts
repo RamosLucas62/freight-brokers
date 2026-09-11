@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { lowConfidenceRule } from '../../src/rules/low-confidence.rule.js';
-import { makeInvoice } from '../fixtures/invoice.fixture.js';
+import { makeExtractionResult, makeInvoice } from '../fixtures/invoice.fixture.js';
 import { makeCarrierResult } from '../fixtures/carrier.fixture.js';
 import type { AuditContext } from '../../src/types/carrier.types.js';
+import { verifyInvoice } from '../../src/confidence/engine.js';
 
 const noopGetCarrier = async () => makeCarrierResult();
 const ctx: AuditContext = {
@@ -12,6 +13,14 @@ const ctx: AuditContext = {
 };
 
 describe('LOW_CONFIDENCE rule', () => {
+  it('does not send evidence-supported invoices to manual review', async () => {
+    const extracted=makeExtractionResult();
+    const evidence=Object.fromEntries(Object.entries(extracted.fields).map(([field,value])=>[field,value==null?{page:null,text:null}:{page:1,text:typeof value==='object'?`${value.account_number} ${value.routing_number}`:field==='valor_total'?'2,500.00':String(value)}]));
+    const verification=verifyInvoice({fields:extracted.fields,evidence,tenantId:'tenant',sourceId:'verified-document'});
+    expect(verification.status).toBe('verified');
+    expect(await lowConfidenceRule.evaluate([makeInvoice({verification})],noopGetCarrier,ctx)).toHaveLength(0);
+  });
+
   it('returns no exceptions when all critical fields are above threshold', async () => {
     const inv = makeInvoice({
       confidence_scores: {

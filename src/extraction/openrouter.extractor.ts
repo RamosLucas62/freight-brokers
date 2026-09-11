@@ -20,8 +20,15 @@ const fields = object({
     account_type: { type: ['string', 'null'], enum: ['checking', 'savings', null] }, payee_name: nullableText,
   })] },
 });
+const evidenceItem=object({page:{type:['integer','null'],minimum:1},text:nullableText});
+const evidence=object({
+  numero_fatura:evidenceItem,numero_carga:evidenceItem,carrier_name:evidenceItem,
+  mc_number:evidenceItem,dot_number:evidenceItem,data_carga:evidenceItem,
+  data_fatura:evidenceItem,valor_total:evidenceItem,origem:evidenceItem,
+  destino:evidenceItem,dados_bancarios:evidenceItem,
+});
 const schema = object({
-  invoice_count: { type: 'integer', minimum: 0 }, fields,
+  invoice_count: { type: 'integer', minimum: 0 }, fields, evidence,
   accessorials: { type: 'array', items: object({
     tipo: { type: 'string' }, descricao: { type: 'string' }, valor: { type: 'number' },
     pagina: { type: 'integer', minimum: 1 },
@@ -30,6 +37,7 @@ const schema = object({
 const payloadSchema = z.object({
   invoice_count: z.number().int().nonnegative(),
   fields: ExtractionResultSchema.shape.fields,
+  evidence: z.record(z.object({page:z.number().int().positive().nullable(),text:z.string().max(500).nullable()})),
   accessorials: z.array(z.object({ tipo: z.string(), descricao: z.string(), valor: z.number(), pagina: z.number().int().positive() })),
 });
 const envelopeSchema = z.object({
@@ -44,6 +52,8 @@ Use null for absent, ambiguous or illegible fields. Never guess or calculate mis
 Dates must be unambiguous YYYY-MM-DD. Preserve leading zeros in account, routing and invoice numbers.
 MC and DOT must belong to the invoicing carrier, not the broker. Use explicit labels only.
 Extract bank details only when explicitly shown; do not confuse phone or tax IDs with accounts.
+For every field, provide a short verbatim source snippet and 1-based PDF page in evidence.
+Use null page and text when the field is absent or the source cannot be located. Never invent evidence.
 Extract load number/date, origin/destination and accessorial charges only when stated.
 Accessorials are ONLY extra charges, never base freight, line haul, subtotal, tax or invoice total.
 Use tipo FUEL_SURCHARGE, DETENTION, LAYOVER, LIFTGATE, TONU or OTHER for each extra charge.
@@ -93,13 +103,13 @@ export class OpenRouterInvoiceExtractor implements IExtractionProvider {
       payload = payloadSchema.parse(JSON.parse(envelope.choices[0].message.content));
     } catch { throw new Error('OpenRouter returned an incomplete, refused or invalid extraction; no invoice accepted.'); }
     if (payload.invoice_count !== 1) throw new Error('Expected exactly one invoice per PDF; split the document and retry.');
-    // Model self-assessment is not calibrated OCR confidence. Require human review.
+    // Confidence is calculated later from verifiable signals; it is never copied from model self-assessment.
     return {
       source_file: file, fields: payload.fields,
-      confidence_scores: Object.fromEntries(Object.entries(payload.fields).map(([name, value]) => [name, value == null ? 0 : 0.5])),
-      accessorials: payload.accessorials.map(item => ({ ...item, confidence: 0.5, posicao: null })),
+      confidence_scores: {}, field_evidence:payload.evidence,
+      accessorials: payload.accessorials.map(item => ({ ...item, confidence: 0, posicao: null })),
       extraction_raw: { provider: 'openrouter', requested_model: model, model: envelope.model ?? model,
-        request_id: envelope.id ?? null, pdf_engine: engine, requires_human_review: true, result: payload },
+        request_id: envelope.id ?? null, pdf_engine: engine, confidence_source:'verification_engine',result: payload },
     };
   }
 }

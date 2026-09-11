@@ -17,6 +17,28 @@ export interface AccessorialLineItem {
 
 export type ConfidenceScores = Record<string, number>;
 
+export type VerificationStatus = 'verified' | 'unverifiable' | 'review';
+
+export interface FieldEvidence {
+  page: number | null;
+  text: string | null;
+}
+
+export interface FieldVerification {
+  status: VerificationStatus;
+  confidence: number;
+  signals: string[];
+  evidence: FieldEvidence | null;
+}
+
+export interface InvoiceVerification {
+  status: VerificationStatus;
+  confidence: number;
+  reasons: string[];
+  sampled_for_quality_control: boolean;
+  fields: Record<string, FieldVerification>;
+}
+
 export interface InvoiceFields {
   numero_fatura:   string | null;
   numero_carga:    string | null;
@@ -35,6 +57,7 @@ export interface InvoiceExtractionResult {
   source_file:       string;
   fields:            InvoiceFields;
   confidence_scores: ConfidenceScores;
+  field_evidence?:    Record<string, FieldEvidence | null>;
   accessorials:      AccessorialLineItem[];
   extraction_raw:    Record<string, unknown>;
 }
@@ -57,6 +80,7 @@ export interface InvoiceRecord {
   dados_bancarios:  DadosBancarios | null;
   accessorials:     AccessorialLineItem[];
   confidence_scores: ConfidenceScores;
+  verification?:     InvoiceVerification;
   extraction_raw:   Record<string, unknown>;
   created_at:       string;
 }

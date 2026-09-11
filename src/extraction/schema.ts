@@ -34,10 +34,16 @@ const InvoiceFieldsSchema = z.object({
   dados_bancarios: DadosBancariosSchema,
 });
 
+const FieldEvidenceSchema = z.object({
+  page: z.number().int().positive().nullable(),
+  text: z.string().max(500).nullable(),
+}).nullable();
+
 export const ExtractionResultSchema = z.object({
   source_file:       z.string(),
   fields:            InvoiceFieldsSchema,
   confidence_scores: z.record(z.number().min(0).max(1)),
+  field_evidence:    z.record(FieldEvidenceSchema).optional(),
   accessorials:      z.array(AccessorialSchema),
   extraction_raw:    z.record(z.unknown()),
 });

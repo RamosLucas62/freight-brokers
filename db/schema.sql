@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   dados_bancarios   JSONB,
   accessorials      JSONB         DEFAULT '[]'::JSONB,
   confidence_scores JSONB         DEFAULT '{}'::JSONB,
+  verification      JSONB         DEFAULT '{}'::JSONB,
   extraction_raw    JSONB,
   created_at        TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
