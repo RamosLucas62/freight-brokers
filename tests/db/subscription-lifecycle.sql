@@ -17,6 +17,12 @@ BEGIN
  PERFORM public.finish_checkout_onboarding_invite('cs_invite',true,NULL);
  IF NOT EXISTS(SELECT 1 FROM public.audit_checkout_onboarding_invites WHERE checkout_session_id='cs_invite' AND status='completed' AND sent_at IS NOT NULL) THEN RAISE EXCEPTION 'Checkout onboarding invitation was not completed'; END IF;
 
+ INSERT INTO public.audit_billing_customers(stripe_checkout_session_id,stripe_customer_id,stripe_subscription_id,billing_email,status)
+ VALUES('cs_trigger_recovery','cus_trigger_recovery','sub_trigger_recovery','recovery@example.com','active');
+ IF NOT EXISTS(SELECT 1 FROM public.audit_checkout_onboarding_invites WHERE checkout_session_id='cs_trigger_recovery' AND email='recovery@example.com' AND status='queued') THEN
+  RAISE EXCEPTION 'Eligible billing checkout did not create a recovery invitation';
+ END IF;
+
  SELECT public.process_stripe_billing_event('evt_failed','invoice.payment_failed',100,'{"subscription":"sub_lifecycle"}') INTO result;
  IF NOT result OR (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'active' OR NOT EXISTS(SELECT 1 FROM public.audit_billing_customers WHERE tenant_id=tenant AND status='past_due' AND payment_grace_until>now()+interval '71 hours') THEN RAISE EXCEPTION 'Payment failure did not start grace period'; END IF;
  UPDATE public.audit_billing_customers SET payment_grace_until=now()-interval '1 minute' WHERE tenant_id=tenant;
