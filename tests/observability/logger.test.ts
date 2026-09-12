@@ -17,5 +17,7 @@ describe('structured logger',()=>{
   const providerError=Object.assign(new Error('Rate confirmation extraction failed (HTTP 402).'),{providerReason:'INSUFFICIENT_CREDITS',providerCode:'payment_required'});
   expect(errorFields(providerError)).toMatchObject({error_code:'OPENROUTER_HTTP_ERROR',upstream_status:402,provider_reason:'INSUFFICIENT_CREDITS',provider_code:'payment_required'});
   expect(errorFields(Object.assign(new Error('The operation timed out'),{name:'TimeoutError'}))).toMatchObject({error_code:'NETWORK_TIMEOUT',error_type:'TimeoutError'});
+  expect(errorFields({code:'P0001',message:'Unknown Stripe subscription',details:null})).toMatchObject({error_code:'STRIPE_SUBSCRIPTION_NOT_READY',error_type:'PostgrestError'});
+  expect(errorFields({code:'XX000',message:'database password leaked'})).toEqual({error_code:'DATABASE_ERROR',error_type:'PostgrestError'});
  });
 });

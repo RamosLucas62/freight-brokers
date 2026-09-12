@@ -1,10 +1,10 @@
 import {getSupabaseClient} from '../config/supabase.js';
 import {notifyLeadFunnel} from '../notifications/google-chat.sender.js';
 import {selectionFromSubscription} from './plans.js';
-import {failure,info} from '../observability/logger.js';
+import {errorFields,failure,info} from '../observability/logger.js';
 
 export interface StripeEvent {id:string;type:string;created?:number;data?:{object?:Record<string,unknown>}}
-interface StripeQueueItem {event_id:string;event_type:string;event_created:number;payload:StripeEvent;}
+interface StripeQueueItem {event_id:string;event_type:string;event_created:number;payload:StripeEvent;attempts:number;}
 
 export async function enqueueStripeEvent(event:StripeEvent):Promise<boolean>{
  if(!event.id||!event.type||!event.data?.object)throw new Error('INVALID_STRIPE_EVENT');
@@ -16,8 +16,20 @@ export async function processNextStripeEvent():Promise<boolean>{
  const db=getSupabaseClient();const claimed=await db.rpc('claim_stripe_webhook');if(claimed.error)throw claimed.error;
  const item=(claimed.data as StripeQueueItem[]|null)?.[0];if(!item)return false;
  const started=Date.now();info('stripe.event.processing',{event_id:item.event_id,event_type:item.event_type});
- try{const applied=await processStripeEvent(item.payload);const done=await db.rpc('finish_stripe_webhook',{p_event_id:item.event_id,p_success:true,p_error:null});if(done.error)throw done.error;info('stripe.event.completed',{event_id:item.event_id,event_type:item.event_type,applied,duration_ms:Date.now()-started});return true;}
- catch(error){failure('stripe.event.failed',error,{event_id:item.event_id,event_type:item.event_type,duration_ms:Date.now()-started});const failed=await db.rpc('finish_stripe_webhook',{p_event_id:item.event_id,p_success:false,p_error:error instanceof Error?error.message:'PROCESSING_FAILED'});if(failed.error)throw failed.error;throw error;}
+ try{
+  const applied=await processStripeEvent(item.payload);
+  const done=await db.rpc('finish_stripe_webhook',{p_event_id:item.event_id,p_success:true,p_error:null});
+  if(done.error){failure('stripe.event.completion_record_failed',done.error,{event_id:item.event_id,event_type:item.event_type});return true;}
+  info('stripe.event.completed',{event_id:item.event_id,event_type:item.event_type,applied,duration_ms:Date.now()-started});return true;
+ }catch(error){
+  const fields=errorFields(error);const code=String(fields.error_code??'STRIPE_EVENT_PROCESSING_FAILED');
+  const failed=await db.rpc('finish_stripe_webhook',{p_event_id:item.event_id,p_success:false,p_error:code});
+  if(failed.error){failure('stripe.event.failure_record_failed',failed.error,{event_id:item.event_id,event_type:item.event_type,original_error_code:code});return true;}
+  if(code==='STRIPE_SUBSCRIPTION_NOT_READY'&&item.attempts<12){
+   info('stripe.event.deferred',{event_id:item.event_id,event_type:item.event_type,error_code:code,attempt:item.attempts,retry_in_seconds:60,duration_ms:Date.now()-started});return true;
+  }
+  failure('stripe.event.failed',error,{event_id:item.event_id,event_type:item.event_type,attempt:item.attempts,duration_ms:Date.now()-started});return true;
+ }
 }
 
 export async function processStripeEvent(event:StripeEvent){
