@@ -24,6 +24,7 @@ const MAX_FILES=50;
 const Input=z.object({
  name:z.string().trim().min(2).max(120),company:z.string().trim().min(2).max(200),email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),
  phone:z.string().trim().max(40).optional(),loads_per_month:z.string().trim().max(40).optional(),turnstile_token:z.string().max(4096).optional(),consent:z.literal(true),
+ utm_source:z.string().trim().max(200).optional(),utm_medium:z.string().trim().max(200).optional(),utm_campaign:z.string().trim().max(200).optional(),utm_term:z.string().trim().max(200).optional(),utm_content:z.string().trim().max(200).optional(),
 });
 const CheckoutInput=z.object({
  email:z.string().trim().email().max(254).transform(value=>value.toLowerCase()),
@@ -100,7 +101,8 @@ async function parseForm(req:IncomingMessage):Promise<{input:z.infer<typeof Inpu
  let form:FormData;
  try{form=await new Response(new Uint8Array(body),{headers:{'Content-Type':contentType}}).formData();}catch{throw new HttpError(400,'invalid_multipart');}
  const consent=['true','1','on','yes'].includes(String(form.get('consent')??'').toLowerCase());
- const input=Input.parse({name:form.get('name'),company:form.get('company'),email:form.get('email'),phone:form.get('phone')||undefined,loads_per_month:form.get('loads_per_month')||form.get('loads')||undefined,turnstile_token:form.get('turnstile_token')||undefined,consent});
+ const input=Input.parse({name:form.get('name'),company:form.get('company'),email:form.get('email'),phone:form.get('phone')||undefined,loads_per_month:form.get('loads_per_month')||form.get('loads')||undefined,turnstile_token:form.get('turnstile_token')||undefined,consent,
+  utm_source:form.get('utm_source')||undefined,utm_medium:form.get('utm_medium')||undefined,utm_campaign:form.get('utm_campaign')||undefined,utm_term:form.get('utm_term')||undefined,utm_content:form.get('utm_content')||undefined});
  const entries=[...form.getAll('files'),...form.getAll('invoices')].filter((value):value is File=>value instanceof Blob&&typeof (value as File).name==='string');
  if(!entries.length)throw new HttpError(400,'files_required');
  return {input,files:entries};
@@ -241,9 +243,10 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     if(!emailRate.allowed){warn('free_audit.submission.rate_limited',{request_id:traceId,scope:'email',retry_after_seconds:emailRate.retryAfter});res.setHeader('Retry-After',String(emailRate.retryAfter));respond(res,429,{error:'too_many_requests'});return true;}
     if(!(await verifyTurnstile(input.turnstile_token,ip))){warn('free_audit.submission.rejected',{request_id:traceId,reason:'turnstile_failed'});respond(res,403,{error:'security_verification_failed'});return true;}
     const token=randomBytes(32).toString('base64url');
-    const registered=await repository.registerRequest({email:input.email,name:input.name,company:input.company,phone:input.phone,loads:input.loads_per_month,tokenHash:tokenHash(token),ipFingerprint:privacyKey(ip)});
+    const attribution={utm_source:input.utm_source,utm_medium:input.utm_medium,utm_campaign:input.utm_campaign,utm_term:input.utm_term,utm_content:input.utm_content};
+    const registered=await repository.registerRequest({email:input.email,name:input.name,company:input.company,phone:input.phone,loads:input.loads_per_month,tokenHash:tokenHash(token),ipFingerprint:privacyKey(ip),attribution});
     info('free_audit.request.registered',{request_id:traceId,audit_request_id:registered.request_id,action:registered.action,submitted_files:files.length});
-    void notifyLeadFunnel({stage:'audit_requested',requestId:registered.request_id,email:input.email,company:input.company,name:input.name,metadata:{action:registered.action,submitted_files:files.length,loads_per_month:input.loads_per_month??null}}).catch(()=>{});
+    void notifyLeadFunnel({stage:'audit_requested',requestId:registered.request_id,email:input.email,company:input.company,name:input.name,metadata:{action:registered.action,submitted_files:files.length,loads_per_month:input.loads_per_month??null,...attribution}}).catch(()=>{});
     if(registered.action==='repeat'){
      if(registered.offer_allowed){const offer=repeatOfferEmail(input.name,config.offerUrl);try{await sendSecurityEmail({to:input.email,...offer,idempotencyKey:`free-audit-offer-${registered.request_id}-${registered.offer_number}`});}catch(error){await repository.releaseOffer(registered.request_id,registered.offer_number);throw error;}}
      info('free_audit.offer.completed',{request_id:traceId,audit_request_id:registered.request_id,email_sent:registered.offer_allowed});respond(res,202,{accepted:true,message:'Check your email for the next step.'});return true;
