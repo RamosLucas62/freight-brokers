@@ -37,7 +37,7 @@ export async function processStripeEvent(event:StripeEvent){
    if(linked.error)throw linked.error;
   }
   const metadata=typeof object.metadata==='object'&&object.metadata?object.metadata as Record<string,unknown>:{};
-  void notifyLeadFunnel({stage:'client_signed',requestId:String(object.id??event.id),email:typeof customerDetails.email==='string'?customerDetails.email:undefined,metadata:{plan:metadata.plan_code??metadata.plan,period:metadata.billing_period,subscription:object.subscription??null}}).catch(()=>{});
+  void notifyLeadFunnel({stage:'client_signed',requestId:String(object.id??event.id),email:typeof customerDetails.email==='string'?customerDetails.email:undefined,metadata:{plan:metadata.plan_code??metadata.plan,period:metadata.billing_period,subscription:object.subscription??null}}).catch(error=>failure('google_chat.lead_notification.failed',error,{event_id:event.id,stage:'client_signed'}));
  }
  if(event.type==='customer.subscription.updated'){
   const object=event.data.object;const metadata=typeof object.metadata==='object'&&object.metadata?object.metadata as Record<string,unknown>:{};
@@ -45,7 +45,7 @@ export async function processStripeEvent(event:StripeEvent){
   const plan=selection?.plan??metadata.plan_code,period=selection?.period??metadata.billing_period;
   if((plan==='core'||plan==='growth'||plan==='scale')&&(period==='monthly'||period==='semiannual'||period==='annual')){
    const synced=await getSupabaseClient().rpc('sync_billing_plan_from_stripe',{p_subscription_id:String(object.id??''),p_plan:plan,p_period:period});if(synced.error)throw synced.error;
-   void notifyLeadFunnel({stage:'plan_changed',requestId:String(object.id??event.id),metadata:{plan,period,status:object.status??null}}).catch(()=>{});
+   void notifyLeadFunnel({stage:'plan_changed',requestId:String(object.id??event.id),metadata:{plan,period,status:object.status??null}}).catch(error=>failure('google_chat.lead_notification.failed',error,{event_id:event.id,stage:'plan_changed'}));
   }
  }
  return Boolean(data);

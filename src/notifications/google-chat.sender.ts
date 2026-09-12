@@ -1,6 +1,8 @@
 type Fetcher=typeof fetch;
 type LeadStage='audit_requested'|'audit_received'|'client_signed'|'followup_sent'|'cancel_requested'|'plan_changed';
 
+const retryDelays=[250,1000,2500];
+
 const stageLabels:Record<LeadStage,string>={
  audit_requested:'cliente pediu a auditoria gratuita',
  audit_received:'cliente recebeu a auditoria gratuita',
@@ -20,13 +22,22 @@ function webhook(kind:'leads'|'errors'):string{
 }
 
 export async function postGoogleChatMessage(url:string,text:string,request:Fetcher=fetch):Promise<void>{
- if(!url)return;
- const response=await request(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text}),signal:AbortSignal.timeout(5000)});
- if(!response.ok)throw new Error(`GOOGLE_CHAT_SEND_FAILED_${response.status}`);
+ if(!url)throw new Error('GOOGLE_CHAT_WEBHOOK_MISSING');
+ let lastError:unknown;
+ for(let attempt=0;attempt<retryDelays.length;attempt++){
+  try{
+   const response=await request(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text}),signal:AbortSignal.timeout(5000)});
+   if(response.ok)return;
+   lastError=new Error(`GOOGLE_CHAT_SEND_FAILED_${response.status}`);
+   if(response.status<500&&response.status!==429)throw lastError;
+  }catch(error){lastError=error;if(error instanceof Error&&/^GOOGLE_CHAT_SEND_FAILED_4(?!29)/.test(error.message))throw error;}
+  if(attempt<retryDelays.length-1)await new Promise(resolve=>setTimeout(resolve,retryDelays[attempt]));
+ }
+ throw lastError instanceof Error?lastError:new Error('GOOGLE_CHAT_SEND_FAILED');
 }
 
 export async function notifyLeadFunnel(input:{stage:LeadStage;requestId?:string|null;email?:string|null;company?:string|null;name?:string|null;follow?:string|number|null;metadata?:Record<string,unknown>},request?:Fetcher):Promise<void>{
- const url=webhook('leads');if(!url)return;
+ const url=webhook('leads');
  const lines=[
   'Lead - funil',
   `ID: ${compact(input.requestId)??'sem id'}`,

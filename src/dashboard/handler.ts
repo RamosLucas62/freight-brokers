@@ -355,7 +355,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   } else {
    await cancelSubscriptionAtPeriodEnd(billing.stripe_subscription_id,tenant);
    const recorded=await customerDb.rpc('portal_record_billing_action_secure',{p_tenant:tenant,p_action:'cancel_at_period_end'});if(recorded.error)throw recorded.error;
-   void notifyLeadFunnel({stage:'cancel_requested',requestId:tenant,email:user.user.email,metadata:{subscription:billing.stripe_subscription_id,status:billing.status}}).catch(()=>{});
+   void notifyLeadFunnel({stage:'cancel_requested',requestId:tenant,email:user.user.email,metadata:{subscription:billing.stripe_subscription_id,status:billing.status}}).catch(error=>failure('google_chat.lead_notification.failed',error,{tenant_id:tenant,stage:'cancel_requested'}));
   }
   send(200,{ok:true});return true;
  }

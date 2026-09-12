@@ -33,4 +33,14 @@ describe('Google Chat notifications',()=>{
   expect(payload.text).toContain('Erro: free_audit.worker.failed (NO_FREE_AUDIT_ATTACHMENTS)');
   expect(payload.text).toContain('Horário: 2026-09-11T10:00:00.000Z');
  });
+ it('retries temporary webhook failures',async()=>{
+  vi.stubEnv('GOOGLE_CHAT_LEADS_WEBHOOK_URL','https://chat.example/leads');
+  const request=vi.fn().mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(new Response('{}',{status:200}));
+  await notifyLeadFunnel({stage:'audit_requested',requestId:'audit-3'},request as typeof fetch);
+  expect(request).toHaveBeenCalledTimes(2);
+ });
+ it('does not silently accept a missing lead webhook',async()=>{
+  vi.stubEnv('GOOGLE_CHAT_LEADS_WEBHOOK_URL','');
+  await expect(notifyLeadFunnel({stage:'audit_requested',requestId:'audit-4'})).rejects.toThrow('GOOGLE_CHAT_WEBHOOK_MISSING');
+ });
 });

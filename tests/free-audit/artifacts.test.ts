@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {failureEmail,freeAuditCsv,freeAuditPdf,repeatOfferEmail,resultEmail,verificationEmail} from '../../src/free-audit/artifacts.js';
+import {failureEmail,followupEmail,freeAuditCsv,freeAuditPdf,repeatOfferEmail,resultEmail,verificationEmail} from '../../src/free-audit/artifacts.js';
 const report={run_id:'11111111-1111-4111-8111-111111111111',generated_at:new Date().toISOString(),total_invoices_processed:2,total_exceptions:1,valor_total_under_review:900,exceptions:[{invoice_id:'i1',tipo_regra:'DUPLICATE_EXACT',rule_label:'Exact Duplicate Invoice',valor_envolvido:900,descricao:'Duplicate',source_reference:{file:'invoice.pdf',page:1},metadata:{}}]};
 describe('free audit email artifacts',()=>{
  it('uses one result CTA instead of selling plans in the email',()=>{expect(verificationEmail('Alex','https://example.com/verify').html).toContain('Confirm and start');expect(repeatOfferEmail('Alex','https://example.com/plans').html).toContain('See plans');const result=resultEmail('Alex','Acme',report,'https://portal.example.com');expect(result.html).toContain('View my audit');expect(result.html).not.toContain('Choose a plan');expect(result.html).not.toContain('Core');expect(result.html).not.toContain('Scale');expect(result.html).toContain('https://portal.example.com');});
@@ -7,4 +7,14 @@ describe('free audit email artifacts',()=>{
  it('links processing failures to file-only recovery without exposing internals',()=>{const email=failureEmail('Alex','invalid_document','https://example.com/retry?token=safe');expect(email.subject).toContain('Action needed');expect(email.html).toContain('standard, unencrypted PDF');expect(email.html).toContain('Upload replacement files');expect(email.html).toContain('contact details are saved');expect(email.html).not.toContain('stack');});
  it('generates a structured visual PDF and usable CSV attachment',()=>{const pdf=freeAuditPdf('Acme',report);const source=pdf.toString('ascii');expect(pdf.subarray(0,8).toString()).toBe('%PDF-1.4');expect(source).toContain('AUDIT SNAPSHOT');expect(source).toContain('AMOUNT UNDER REVIEW');expect(source).toContain('FINDINGS REQUIRING REVIEW');expect(source).toContain('Exact Duplicate Invoice');expect(source).toContain('Page 1 of 1');expect(freeAuditCsv(report).toString()).toContain('Exact Duplicate Invoice');});
  it('paginates long reports without losing the review disclaimer',()=>{const longReport={...report,total_exceptions:18,exceptions:Array.from({length:18},(_,index)=>({...report.exceptions[0],invoice_id:`i${index}`,descricao:'A detailed explanation that remains readable and wraps into more than one line in the visual report.'}))};const source=freeAuditPdf('Acme',longReport).toString('ascii');expect(source).toMatch(/\/Count [2-9]/);expect(source).toContain('Page 2 of');expect(source.match(/Automated findings require human review/g)?.length).toBeGreaterThan(1);});
+ it('uses a distinct persuasive angle in every follow-up',()=>{
+  const messages=[1,3,5,10,30].map(day=>followupEmail(day as 1|3|5|10|30,'Alex',report,'growth','https://example.com/result','https://example.com/stop'));
+  expect(new Set(messages.map(message=>message.subject)).size).toBe(5);
+  for(const message of messages){expect(message.html).toContain('https://example.com/result');expect(message.html).toContain('https://example.com/stop');expect(message.html.match(/<li/g)?.length??0).toBe(0);expect(message.html.match(/✓/g)?.length).toBe(3);}
+  expect(messages[0].html).toContain('$900.00 under review');
+  expect(messages[1].html).toContain('duplicate charges');
+  expect(messages[2].html).toContain('7-day free trial');
+  expect(messages[3].html).toContain('unsupported accusations');
+  expect(messages[4].html).toContain('underlying cost');
+ });
 });
