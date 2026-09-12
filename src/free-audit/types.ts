@@ -13,6 +13,11 @@ export interface FreeAuditRequest {
  result_token_hash?:string|null;
  result_expires_at?:string|null;
  recommended_plan?:'core'|'growth'|'scale'|null;
+ utm_source?:string|null;
+ utm_medium?:string|null;
+ utm_campaign?:string|null;
+ utm_term?:string|null;
+ utm_content?:string|null;
 }
 
 export interface FreeAuditPublicResult extends FreeAuditRequest {recommended_plan:'core'|'growth'|'scale';}

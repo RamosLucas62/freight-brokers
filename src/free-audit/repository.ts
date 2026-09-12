@@ -4,6 +4,7 @@ import type {FreeAuditAttachment,FreeAuditFollowup,FreeAuditPublicResult,FreeAud
 import {createHash} from 'node:crypto';
 import {recommendedPlan} from './recommendation.js';
 import type {BillingPeriod,PlanCode} from '../billing/plans.js';
+import {warn} from '../observability/logger.js';
 
 export async function recordCheckoutAcceptance(input:{email:string;plan:PlanCode;period:BillingPeriod;termsVersion:string;privacyVersion:string;disclosureVersion:string;disclosureText:string;ipAddress:string;userAgent:string;source:'public_pricing'|'free_audit_result'}):Promise<string>{
  const {data,error}=await getSupabaseClient().rpc('record_checkout_acceptance',{
@@ -13,12 +14,16 @@ export async function recordCheckoutAcceptance(input:{email:string;plan:PlanCode
  return data;
 }
 
-export async function registerRequest(input:{email:string;name:string;company:string;phone?:string;loads?:string;tokenHash:string;ipFingerprint:string}):Promise<FreeAuditRegistration>{
+export async function registerRequest(input:{email:string;name:string;company:string;phone?:string;loads?:string;tokenHash:string;ipFingerprint:string;attribution?:{utm_source?:string;utm_medium?:string;utm_campaign?:string;utm_term?:string;utm_content?:string}}):Promise<FreeAuditRegistration>{
  const {data,error}=await getSupabaseClient().rpc('register_free_audit_request',{
   p_email:input.email,p_email_hash:createHash('sha256').update(input.email).digest('hex'),p_name:input.name,p_company:input.company,p_phone:input.phone??'',p_loads:input.loads??'',p_token_hash:input.tokenHash,p_ip_fingerprint:input.ipFingerprint,
  });
  const row=(data as FreeAuditRegistration[]|null)?.[0];
  if(error||!row)throw new Error('FREE_AUDIT_REGISTRATION_FAILED');
+ if(row.action==='created'&&input.attribution&&Object.values(input.attribution).some(Boolean)){
+  const saved=await getSupabaseClient().from('free_audit_requests').update(input.attribution).eq('id',row.request_id);
+  if(saved.error)warn('free_audit.attribution.failed',{audit_request_id:row.request_id,error_code:String(saved.error.code??'DATABASE_ERROR')});
+ }
  return row;
 }
 
@@ -137,7 +142,7 @@ export async function claimExpired():Promise<string|null>{
 export async function expireRequest(requestId:string):Promise<void>{
  const removed=await getSupabaseClient().from('free_audit_attachments').delete().eq('request_id',requestId);
  if(removed.error)throw new Error('FREE_AUDIT_RETENTION_FAILED');
- const {error}=await getSupabaseClient().from('free_audit_requests').update({email:`expired+${requestId.replaceAll('-','')}@invalid.local`,contact_name:'Deleted lead',company_name:'Deleted lead',phone:null,loads_per_month:null,ip_fingerprint:'0'.repeat(64),status:'expired',retention_status:'expired',result:null,verification_token_hash:null,retry_token_hash:null,retry_expires_at:null,retry_claimed_at:null,last_error:null,updated_at:new Date().toISOString()}).eq('id',requestId).eq('retention_status','deleting');
+ const {error}=await getSupabaseClient().from('free_audit_requests').update({email:`expired+${requestId.replaceAll('-','')}@invalid.local`,contact_name:'Deleted lead',company_name:'Deleted lead',phone:null,loads_per_month:null,utm_source:null,utm_medium:null,utm_campaign:null,utm_term:null,utm_content:null,ip_fingerprint:'0'.repeat(64),status:'expired',retention_status:'expired',result:null,verification_token_hash:null,retry_token_hash:null,retry_expires_at:null,retry_claimed_at:null,last_error:null,updated_at:new Date().toISOString()}).eq('id',requestId).eq('retention_status','deleting');
  if(error)throw new Error('FREE_AUDIT_RETENTION_FAILED');
 }
 

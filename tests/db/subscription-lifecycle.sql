@@ -28,12 +28,14 @@ BEGIN
  UPDATE public.audit_billing_customers SET payment_grace_until=now()-interval '1 minute' WHERE tenant_id=tenant;
  PERFORM public.suspend_expired_payment_grace();
  IF (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'paused' THEN RAISE EXCEPTION 'Expired grace did not pause tenant'; END IF;
- SELECT public.process_stripe_billing_event('evt_paid','invoice.paid',101,'{"subscription":"sub_lifecycle"}') INTO result;
+ SELECT public.process_stripe_billing_event('evt_paid','invoice.paid',101,'{"id":"in_paid_lifecycle","subscription":"sub_lifecycle","amount_paid":538200,"currency":"usd","status_transitions":{"paid_at":101}}') INTO result;
  IF (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'active' THEN RAISE EXCEPTION 'Paid invoice did not reactivate tenant'; END IF;
- SELECT public.process_stripe_billing_event('evt_paid','invoice.paid',101,'{"subscription":"sub_lifecycle"}') INTO result;
+ IF NOT EXISTS(SELECT 1 FROM public.audit_billing_customers WHERE tenant_id=tenant AND last_paid_amount_cents=538200 AND last_paid_currency='usd' AND last_paid_invoice_id='in_paid_lifecycle' AND last_paid_at=to_timestamp(101)) THEN RAISE EXCEPTION 'Paid invoice revenue was not captured'; END IF;
+ SELECT public.process_stripe_billing_event('evt_paid','invoice.paid',101,'{"id":"in_paid_lifecycle","subscription":"sub_lifecycle","amount_paid":538200,"currency":"usd"}') INTO result;
  IF result THEN RAISE EXCEPTION 'Duplicate Stripe event was not ignored'; END IF;
- SELECT public.process_stripe_billing_event('evt_paid_parent','invoice.paid',102,'{"parent":{"subscription_details":{"subscription":"sub_lifecycle"}}}') INTO result;
+ SELECT public.process_stripe_billing_event('evt_paid_parent','invoice.paid',102,'{"id":"in_zero","amount_paid":0,"currency":"usd","parent":{"subscription_details":{"subscription":"sub_lifecycle"}}}') INTO result;
  IF NOT result OR (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'active' THEN RAISE EXCEPTION 'Modern invoice subscription reference was not processed'; END IF;
+ IF (SELECT last_paid_invoice_id FROM public.audit_billing_customers WHERE tenant_id=tenant)<>'in_paid_lifecycle' THEN RAISE EXCEPTION 'Zero-value invoice replaced confirmed revenue'; END IF;
  SELECT public.process_stripe_billing_event('evt_deleted','customer.subscription.deleted',103,'{"id":"sub_lifecycle","status":"canceled"}') INTO result;
  IF (SELECT status FROM public.audit_tenants WHERE id=tenant)<>'inactive' OR NOT EXISTS(SELECT 1 FROM public.audit_data_deletions WHERE tenant_id=tenant AND scheduled_for>now()+interval '29 days') THEN
   RAISE EXCEPTION 'Cancellation did not inactivate tenant and schedule deletion';

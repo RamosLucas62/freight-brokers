@@ -4,6 +4,7 @@ import {resolve} from 'node:path';
 import {createClient} from '@supabase/supabase-js';
 import {z} from 'zod';
 import {adminAction} from './admin.js';
+import {buildCrmFunnel,type CrmBillingRow,type CrmFollowupRow,type CrmLeadRow} from './crm.js';
 import {getSupabaseClient,timedFetch} from '../config/supabase.js';
 import {applyRetentionDiscount,cancelSubscriptionAtPeriodEnd,createBillingPortalSession,pauseSubscriptionOneMonth,retrieveCheckoutSession,retrieveSubscription} from '../billing/stripe.js';
 import type {RateLimiter,RateLimitRule} from '../security/rate-limit.js';
@@ -260,6 +261,17 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   if(url.pathname==='/api/portal/admin/confidence'&&req.method==='GET'){
    const result=await serviceDb.rpc('portal_admin_confidence_reviews',{p_actor:user.user.id,p_page:page});
    if(result.error)throw result.error;send(200,result.data);return true;
+  }
+  if(url.pathname==='/api/portal/admin/crm'&&req.method==='GET'){
+   const leads=await serviceDb.from('free_audit_requests').select('id,email,contact_name,company_name,phone,loads_per_month,status,created_at,updated_at,completed_at,result,utm_source,utm_medium,utm_campaign,utm_term,utm_content',{count:'exact'}).neq('status','expired').order('created_at',{ascending:false}).limit(500);
+   if(leads.error)throw leads.error;
+   const ids=(leads.data??[]).map(lead=>lead.id);const emails=[...new Set((leads.data??[]).map(lead=>lead.email))];
+   const [followups,billing]=await Promise.all([
+    ids.length?serviceDb.from('free_audit_followups').select('request_id,day_offset,status,sent_at').in('request_id',ids).limit(5000):Promise.resolve({data:[],error:null}),
+    emails.length?serviceDb.from('audit_billing_customers').select('billing_email,status,trial_ends_at,canceled_at,plan_code,billing_period,last_paid_amount_cents,last_paid_currency,last_paid_at,updated_at').in('billing_email',emails).order('updated_at',{ascending:false}).limit(2000):Promise.resolve({data:[],error:null}),
+   ]);
+   if(followups.error||billing.error)throw followups.error??billing.error;
+   send(200,{...buildCrmFunnel((leads.data??[]) as CrmLeadRow[],(followups.data??[]) as CrmFollowupRow[],(billing.data??[]) as CrmBillingRow[]),truncated:(leads.count??0)>500});return true;
   }
   const resources:Record<string,[string,string]>={companies:['audit_tenants','id,name,alias,status,is_test,created_at'],activity:['audit_admin_activity','id,actor_email,action,tenant_id,target_user_id,company_name,target_email,details,created_at']};
   const resource=resources[url.pathname.slice('/api/portal/admin/'.length)];

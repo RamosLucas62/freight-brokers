@@ -4,14 +4,27 @@ The public page submits the existing form as `multipart/form-data` to:
 
 `POST https://api.audit.aiolympian.com/webhooks/free-audit`
 
-Required fields: `name`, `company`, `email`, `consent`, `turnstile_token`, and one or more `files`. Optional fields: `phone` and `loads_per_month`. The file input may use either `files` or `invoices` as its name. PDF and ZIP uploads are accepted, with up to 50 unique PDFs, 20 MiB per PDF, and 100 MiB total after ZIP extraction.
+Required fields: `name`, `company`, `email`, `consent`, `turnstile_token`, and one or more `files`. Optional fields: `phone`, `loads_per_month`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, and `utm_content`. The file input may use either `files` or `invoices` as its name. PDF and ZIP uploads are accepted, with up to 50 unique PDFs, 20 MiB per PDF, and 100 MiB total after ZIP extraction.
 
 ```js
 const form = document.querySelector('#free-audit-form');
+const utmNames = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
+
+// Preserve first-touch attribution while the visitor browses before submitting.
+for (const name of utmNames) {
+  const value = new URLSearchParams(location.search).get(name);
+  if (value && !sessionStorage.getItem(`first_touch_${name}`)) {
+    sessionStorage.setItem(`first_touch_${name}`, value);
+  }
+}
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const data = new FormData(form);
+  for (const name of utmNames) {
+    const value = sessionStorage.getItem(`first_touch_${name}`);
+    if (value) data.set(name, value);
+  }
   const response = await fetch('https://api.audit.aiolympian.com/webhooks/free-audit', {
     method: 'POST',
     body: data,

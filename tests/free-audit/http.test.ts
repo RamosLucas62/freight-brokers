@@ -25,7 +25,7 @@ beforeEach(async()=>{
  server=createServer((req,res)=>void handler(req,res,limiter));await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
 afterEach(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));vi.unstubAllEnvs();});
-function form(){const value=new FormData();value.set('name','Lucas Ramos');value.set('company','Olympian');value.set('email','Lucas@Example.com');value.set('phone','+1 555 000 0000');value.set('loads_per_month','101-500');value.set('consent','true');value.set('turnstile_token','verified');value.append('files',new Blob([Buffer.from('%PDF-1.4 test')],{type:'application/pdf'}),'invoice.pdf');return value;}
+function form(){const value=new FormData();value.set('name','Lucas Ramos');value.set('company','Olympian');value.set('email','Lucas@Example.com');value.set('phone','+1 555 000 0000');value.set('loads_per_month','101-500');value.set('utm_source','google');value.set('utm_medium','cpc');value.set('utm_campaign','free-audit-us');value.set('utm_term','freight audit');value.set('utm_content','hero');value.set('consent','true');value.set('turnstile_token','verified');value.append('files',new Blob([Buffer.from('%PDF-1.4 test')],{type:'application/pdf'}),'invoice.pdf');return value;}
 
 describe('free audit public boundary',()=>{
  it('creates Stripe checkout from the public pricing origin',async()=>{
@@ -41,7 +41,7 @@ describe('free audit public boundary',()=>{
  it('stores PDFs and sends verification only for a first request',async()=>{
   mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'created',offer_allowed:false,offer_number:0});
   const response=await fetch(base+'/webhooks/free-audit',{method:'POST',headers:{Origin:'https://aiolympian.com'},body:form()});
- expect(response.status).toBe(202);expect(mocks.registerRequest).toHaveBeenCalledWith(expect.objectContaining({email:'lucas@example.com'}));expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.markUploaded).toHaveBeenCalledOnce();expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({to:'lucas@example.com',subject:expect.stringContaining('Confirm')}));
+ expect(response.status).toBe(202);expect(mocks.registerRequest).toHaveBeenCalledWith(expect.objectContaining({email:'lucas@example.com',attribution:{utm_source:'google',utm_medium:'cpc',utm_campaign:'free-audit-us',utm_term:'freight audit',utm_content:'hero'}}));expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.markUploaded).toHaveBeenCalledOnce();expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({to:'lucas@example.com',subject:expect.stringContaining('Confirm')}));
  });
  it('allows the configured www origin and returns matching CORS headers',async()=>{
   mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'created',offer_allowed:false,offer_number:0});
