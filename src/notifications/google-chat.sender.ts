@@ -3,13 +3,22 @@ type LeadStage='audit_requested'|'audit_received'|'client_signed'|'followup_sent
 
 const retryDelays=[250,1000,2500];
 
-const stageLabels:Record<LeadStage,string>={
- audit_requested:'cliente pediu a auditoria gratuita',
- audit_received:'cliente recebeu a auditoria gratuita',
- client_signed:'cliente assinou',
- followup_sent:'cliente recebeu follow',
- cancel_requested:'cliente pediu para cancelar',
- plan_changed:'cliente mudou de plano',
+const planLabels:Record<string,string>={core:'Core',growth:'Growth',scale:'Scale'};
+const periodLabels:Record<string,string>={monthly:'Mensal',semiannual:'Semestral',annual:'Anual'};
+const errorLocations:Record<string,string>={
+ 'checkout.public.failed':'Checkout público',
+ 'free_audit.checkout.failed':'Checkout da auditoria gratuita',
+ 'free_audit.submission.failed':'Envio da auditoria gratuita',
+ 'free_audit.worker.failed':'Processamento da auditoria gratuita',
+ 'free_audit.followup.failed':'Envio de follow-up',
+ 'inbound.worker.failed':'Processamento de documentos',
+ 'stripe.event.failed':'Atualização da assinatura Stripe',
+ 'stripe.webhook.enqueue_failed':'Recebimento do webhook Stripe',
+ 'resend.webhook.failed':'Recebimento do webhook Resend',
+ 'notification.delivery.failed':'Envio de relatório ou alerta',
+ 'stripe.onboarding_email.failed':'Envio do onboarding',
+ 'portal.request.failed':'Portal do cliente',
+ 'google_chat.lead_notification.failed':'Aviso comercial do Google Chat',
 };
 
 function compact(value:unknown):string|undefined{
@@ -38,28 +47,37 @@ export async function postGoogleChatMessage(url:string,text:string,request:Fetch
 
 export async function notifyLeadFunnel(input:{stage:LeadStage;requestId?:string|null;email?:string|null;company?:string|null;name?:string|null;follow?:string|number|null;metadata?:Record<string,unknown>},request?:Fetcher):Promise<void>{
  const url=webhook('leads');
- const lines=[
-  'Lead - funil',
-  `ID: ${compact(input.requestId)??'sem id'}`,
-  `Etapa: ${stageLabels[input.stage]}`,
-  input.follow!==undefined&&input.follow!==null?`Qual follow: D+${input.follow}`:undefined,
-  compact(input.company)?`Empresa: ${input.company}`:undefined,
-  compact(input.name)?`Contato: ${input.name}`:undefined,
-  compact(input.email)?`Email: ${input.email}`:undefined,
-  input.metadata&&Object.keys(input.metadata).length?`Detalhes: ${JSON.stringify(input.metadata)}`:undefined,
- ].filter(Boolean).join('\n');
+ const name=compact(input.name)??compact(input.email)??'Lead';const company=compact(input.company);const email=compact(input.email);const follow=compact(input.follow);const metadata=input.metadata??{};
+ const heading:Record<LeadStage,string>={audit_requested:'👋 *Opa, novo lead!*',audit_received:'✅ *Auditoria entregue*',client_signed:'🎉 *Novo cliente!*',followup_sent:`📩 *Follow-up D+${follow??'?'} enviado*`,cancel_requested:'⚠️ *Pedido de cancelamento*',plan_changed:'🔄 *Plano atualizado*'};
+ const stage:Record<LeadStage,string>={audit_requested:'Auditoria gratuita solicitada',audit_received:'Auditoria gratuita recebida',client_signed:'Cliente assinou',followup_sent:`${name} acaba de receber o follow-up D+${follow??'?'}.`,cancel_requested:'Cliente solicitou cancelamento',plan_changed:'Cliente alterou o plano'};
+ const detailLines=[
+  compact(metadata.loads_per_month)?`*Volume informado:* ${compact(metadata.loads_per_month)}`:undefined,
+  compact(metadata.invoice_count)?`*Faturas analisadas:* ${compact(metadata.invoice_count)}`:undefined,
+  compact(metadata.exception_count)?`*Achados:* ${compact(metadata.exception_count)}`:undefined,
+  compact(metadata.recommended_plan)?`*Plano recomendado:* ${planLabels[String(metadata.recommended_plan)]??compact(metadata.recommended_plan)}`:undefined,
+  compact(metadata.plan)?`*Plano:* ${planLabels[String(metadata.plan)]??compact(metadata.plan)}`:undefined,
+  compact(metadata.period)?`*Período:* ${periodLabels[String(metadata.period)]??compact(metadata.period)}`:undefined,
+  compact(metadata.utm_source)?`*Origem:* ${compact(metadata.utm_source)}${compact(metadata.utm_medium)?` / ${compact(metadata.utm_medium)}`:''}${compact(metadata.utm_campaign)?` / ${compact(metadata.utm_campaign)}`:''}`:undefined,
+ ];
+ const lines=[heading[input.stage],'',`*Nome:* ${name}`,company?`*Empresa:* ${company}`:undefined,email?`*E-mail:* ${email}`:undefined,`*Etapa:* ${stage[input.stage]}`,...detailLines,'',`_ID interno: ${compact(input.requestId)??'não disponível'}_`].filter(Boolean).join('\n');
  await postGoogleChatMessage(url,lines,request);
 }
 
 export async function notifyOperationalError(record:Record<string,unknown>,request?:Fetcher):Promise<void>{
- const url=webhook('errors');if(!url)return;
+ const url=webhook('errors');
  const id=compact(record.request_id)??compact(record.audit_request_id)??compact(record.job_id)??compact(record.event_id)??compact(record.delivery_id)??compact(record.deletion_job_id)??compact(record.tenant_id)??'sem id';
  const code=compact(record.error_code)??compact(record.event)??'UNCLASSIFIED_ERROR';
+ const event=compact(record.event)??'unknown';const location=errorLocations[event]??event;
  const lines=[
-  'Erro - Freight Audit',
-  `ID: ${id}`,
-  `Erro: ${compact(record.event)??'unknown'} (${code})`,
-  `Horário: ${compact(record.timestamp)??new Date().toISOString()}`,
- ].join('\n');
+  '🚨 *Erro no Freight Audit*','',
+  `*Onde aconteceu:* ${location}`,
+  `*Código:* ${code}`,
+  `*Referência:* ${id}`,
+  compact(record.stage)?`*Etapa técnica:* ${compact(record.stage)}`:undefined,
+  compact(record.upstream_status)?`*Resposta externa:* HTTP ${compact(record.upstream_status)}`:undefined,
+  compact(record.attempt)?`*Tentativa:* ${compact(record.attempt)}`:undefined,
+  `*Horário:* ${compact(record.timestamp)??new Date().toISOString()}`,'',
+  '_Ação: abra os logs usando a referência acima. Dados sensíveis não são enviados para este canal._',
+ ].filter(Boolean).join('\n');
  await postGoogleChatMessage(url,lines,request);
 }

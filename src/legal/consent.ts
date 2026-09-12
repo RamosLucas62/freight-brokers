@@ -1,12 +1,6 @@
-import type {BillingPeriod,PlanCode} from '../billing/plans.js';
-
 export const TERMS_VERSION='2026-09-12';
 export const PRIVACY_VERSION='2026-09-12';
-export const CHECKOUT_DISCLOSURE_VERSION='2026-09-12.1';
-
-export const CHECKOUT_ACCEPTANCE_TEXT='I agree to the Terms of Service and acknowledge the Privacy Policy. I understand that my 7-day free trial starts now and, unless I cancel before it ends, the selected plan will automatically renew at the price and billing frequency displayed below until canceled.';
-
-export function checkoutDisclosure(_plan:PlanCode,_period:BillingPeriod){return CHECKOUT_ACCEPTANCE_TEXT;}
+export const PORTAL_ACCEPTANCE_TEXT='I have read and agree to the Terms of Service and acknowledge the Privacy Policy. I confirm that I am authorized to accept these terms on behalf of my company.';
 
 export function legalPage(kind:'terms'|'privacy'){
  const terms=kind==='terms';
@@ -28,7 +22,7 @@ function termsBody(){return `
 
 function privacyBody(){return `
 <section><h2>1. Scope</h2><p>This Policy explains how Olympian handles information through its websites, checkout, customer portal, invoice-auditing service, and support channels. It does not cover a customer's own privacy practices.</p></section>
-<section><h2>2. Information we collect</h2><p>We collect account and contact details; company, plan, and subscription information; billing identifiers supplied by Stripe (not full card numbers); invoices, rate confirmations, PODs, banking details, carrier identifiers, shipment and load information; recipient and sender addresses; support communications; and device, browser, IP, security, access, and usage records. We also retain evidence of legal acceptance, including the wording and versions presented, date and time, plan, billing cadence, IP address, and user agent.</p></section>
+<section><h2>2. Information we collect</h2><p>We collect account and contact details; company, plan, and subscription information; billing identifiers supplied by Stripe (not full card numbers); invoices, rate confirmations, PODs, banking details, carrier identifiers, shipment and load information; recipient and sender addresses; support communications; and device, browser, IP, security, access, and usage records. We also retain evidence of legal acceptance, including the authenticated user, wording and versions presented, date and time, IP address, and user agent.</p></section>
 <section><h2>3. How we use information</h2><p>We use information to provide and secure the service, audit documents, match supporting records, send reports and alerts, manage billing and accounts, prevent abuse, troubleshoot, comply with law, and improve reliability. We do not sell personal information or share it for cross-context behavioral advertising.</p></section>
 <section><h2>4. Service providers and disclosures</h2><p>Information may be processed by providers that help operate the service, such as Supabase, Cloudflare, Stripe, Resend, AI model providers, and government carrier-data services such as FMCSA. We may also disclose information when required by law, to protect rights and security, during a corporate transaction, or at your direction. Providers receive only the access reasonably needed for their role and are subject to applicable contractual restrictions.</p></section>
 <section><h2>5. Retention</h2><p>Submitted audit documents are ordinarily deleted within 30 days. We keep account, billing, security, consent, transaction, and audit records only as long as reasonably needed for the purposes described above, legal obligations, fraud prevention, and dispute resolution. Backups may take additional time to expire.</p></section>

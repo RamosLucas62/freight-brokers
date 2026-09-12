@@ -9,9 +9,9 @@ describe('Stripe webhook persistence',()=>{
   await expect(processStripeEvent({id:'evt_1',type:'invoice.payment_failed',created:123,data:{object:{subscription:'sub_1'}}})).resolves.toBe(true);
   expect(rpc).toHaveBeenCalledWith('process_stripe_billing_event',{p_event_id:'evt_1',p_event_type:'invoice.payment_failed',p_event_created:123,p_object:{subscription:'sub_1'}});
  });
- it('links completed Stripe checkout to its immutable clickwrap evidence',async()=>{
+ it('processes completed Stripe checkout without checkout-page legal acceptance',async()=>{
   await processStripeEvent({id:'evt_checkout',type:'checkout.session.completed',created:123,data:{object:{id:'cs_1',client_reference_id:'22222222-2222-4222-8222-222222222222',customer:'cus_1',subscription:'sub_1',customer_details:{email:'buyer@example.com'}}}});
-  expect(rpc).toHaveBeenCalledWith('confirm_checkout_acceptance',{p_acceptance_id:'22222222-2222-4222-8222-222222222222',p_checkout_session_id:'cs_1',p_billing_email:'buyer@example.com',p_stripe_customer_id:'cus_1',p_stripe_subscription_id:'sub_1'});
+  expect(rpc).not.toHaveBeenCalledWith('confirm_checkout_acceptance',expect.anything());
  });
  it('ignores unrelated Stripe events without a database write',async()=>{
   await expect(processStripeEvent({id:'evt_2',type:'charge.refunded',data:{object:{}}})).resolves.toBe(false);expect(rpc).not.toHaveBeenCalled();

@@ -16,6 +16,7 @@ import {sendSecurityEmail} from '../notifications/security.sender.js';
 import {notifyLeadFunnel} from '../notifications/google-chat.sender.js';
 import {plans,planFromMetadata,periodFromMetadata,selectionFromSubscription} from '../billing/plans.js';
 import {failure,requestId} from '../observability/logger.js';
+import {PORTAL_ACCEPTANCE_TEXT,PRIVACY_VERSION,TERMS_VERSION} from '../legal/consent.js';
 
 const uuid=z.string().uuid();
 async function body(req:IncomingMessage) {
@@ -206,7 +207,8 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const serviceDb=getSupabaseClient();
  const role=await serviceDb.from('audit_admins').select('user_id').eq('user_id',user.user.id).maybeSingle();
  const access=await serviceDb.from('audit_portal_users').select('enabled,guide_completed_at').eq('user_id',user.user.id).maybeSingle();
- if(role.error||access.error)throw new Error('Access lookup failed');
+ const legalAcceptance=await serviceDb.from('audit_portal_legal_acceptances').select('accepted_at').eq('user_id',user.user.id).eq('terms_version',TERMS_VERSION).eq('privacy_version',PRIVACY_VERSION).maybeSingle();
+ if(role.error||access.error||legalAcceptance.error)throw new Error('Access lookup failed');
  if(access.data?.enabled===false){clearSession();send(401,{error:'Your portal access has been disabled. Contact your account administrator.'});return true;}
  const isAdmin=Boolean(role.data);
  // Customer reads are enforced by the user's JWT and database RLS. The service
@@ -215,6 +217,16 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const customerDb=typeof (userDb as {from?:unknown}).from==='function'?userDb:serviceDb;
  const db=isAdmin?serviceDb:customerDb;
  const aal=verifiedAal(token);
+ const requiresLegalAcceptance=!isAdmin&&!legalAcceptance.data?.accepted_at;
+ if(url.pathname==='/api/portal/legal/accept'&&req.method==='POST'){
+  if(isAdmin){send(403,{error:'Legal acceptance is not required in administrator mode.'});return true;}
+  if(!(await take({scope:'legal-accept-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true})))return true;
+  z.object({terms_accepted:z.literal(true),privacy_acknowledged:z.literal(true)}).parse(await body(req));
+  const accepted=await serviceDb.rpc('record_portal_legal_acceptance',{p_user:user.user.id,p_terms_version:TERMS_VERSION,p_privacy_version:PRIVACY_VERSION,p_acceptance_text:PORTAL_ACCEPTANCE_TEXT,p_ip_address:ip,p_user_agent:String(req.headers['user-agent']??'unknown')});
+  if(accepted.error||!accepted.data)throw accepted.error??new Error('PORTAL_LEGAL_ACCEPTANCE_FAILED');
+  send(200,{ok:true,accepted_at:accepted.data,terms_version:TERMS_VERSION,privacy_version:PRIVACY_VERSION});return true;
+ }
+ if(requiresLegalAcceptance&&url.pathname!=='/api/portal/me'){send(428,{error:'Accept the Terms of Service and acknowledge the Privacy Policy to continue.'});return true;}
  if(url.pathname==='/api/portal/guide/complete'&&req.method==='POST'){
   if(isAdmin){send(403,{error:'The customer guide is not available in administrator mode.'});return true;}
   if(!(await take({scope:'guide-complete-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true})))return true;
@@ -285,7 +297,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  if(membership.error)throw membership.error;
  if(url.pathname==='/api/portal/me'&&req.method==='GET'){
   // Administrators browse the paginated company directory, avoiding a truncated global selector.
-  send(200,{email:user.user.email,user_id:user.user.id,is_admin:isAdmin,aal,show_guide:!isAdmin&&!access.data?.guide_completed_at,companies:membership.data?.map(m=>({...m.audit_tenants,role:m.role})).filter(Boolean)});return true;
+  send(200,{email:user.user.email,user_id:user.user.id,is_admin:isAdmin,aal,requires_legal_acceptance:requiresLegalAcceptance,terms_version:TERMS_VERSION,privacy_version:PRIVACY_VERSION,show_guide:!isAdmin&&!access.data?.guide_completed_at,companies:membership.data?.map(m=>({...m.audit_tenants,role:m.role})).filter(Boolean)});return true;
  }
  const tenant=uuid.parse(url.searchParams.get('company'));
  if(!isAdmin&&!membership.data?.some(m=>m.tenant_id===tenant)){send(403,{error:'You do not have access to this company.'});return true;}

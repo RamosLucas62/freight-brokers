@@ -15,7 +15,7 @@ import {failure,info,requestId,warn} from '../observability/logger.js';
 import {createCheckoutSession} from '../billing/stripe.js';
 import {prices,type BillingPeriod,type PlanCode} from '../billing/plans.js';
 import {answerSupport} from './support.js';
-import {CHECKOUT_DISCLOSURE_VERSION,PRIVACY_VERSION,TERMS_VERSION,checkoutDisclosure,legalPage} from '../legal/consent.js';
+import {legalPage} from '../legal/consent.js';
 
 const MAX_BODY_BYTES=105*1024*1024;
 const MAX_TOTAL_BYTES=100*1024*1024;
@@ -28,9 +28,15 @@ const Input=z.object({
 });
 const CheckoutInput=z.object({
  email:z.string().trim().email().max(254).transform(value=>value.toLowerCase()),
- plan:z.enum(['core','growth','scale']),period:z.enum(['monthly','semiannual','annual']),terms_accepted:z.literal(true),turnstile_token:z.string().max(4096).optional(),
+ plan:z.enum(['core','growth','scale']),period:z.enum(['monthly','semiannual','annual']),turnstile_token:z.string().max(4096).optional(),
 });
-const ResultCheckoutInput=z.object({plan:z.enum(['core','growth','scale']),period:z.enum(['monthly','semiannual','annual']),terms_accepted:z.literal('on')});
+const ResultCheckoutInput=z.object({plan:z.enum(['core','growth','scale']),period:z.enum(['monthly','semiannual','annual'])});
+
+function withoutCheckoutConsent(html:string):string{
+ return html
+  .replace(/<label class="consent-box">[\s\S]*?<\/label>(?=<div class="plan-grid">)/,'')
+  .replace(",terms_accepted:new FormData(form).get('terms_accepted')||''",'');
+}
 
 interface PdfUpload {name:string;bytes:Buffer;hash:string;}
 
@@ -175,13 +181,12 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     const rate=await limiter.consume({scope:'free-audit-result-checkout-ip',key:ip,limit:10,windowSeconds:3600,failClosed:true});if(!rate.allowed){respond(res,429,{error:'too_many_requests'});req.resume();return true;}
     const token=url.searchParams.get('token')??'';const hash=/^[A-Za-z0-9_-]{43}$/.test(token)?tokenHash(token):'';const audit=hash?await repository.publicResult(hash):null;if(!audit?.result){page(res,404,`<main class="shell"><section class="copy"><h1>This private result is unavailable.</h1><p>The link may be incomplete or expired.</p></section></main>`,'Audit result unavailable');req.resume();return true;}
     const contentType=req.headers['content-type']?.split(';',1)[0].trim().toLowerCase();if(contentType!=='application/x-www-form-urlencoded')throw new HttpError(415,'form_required');
-    const params=new URLSearchParams((await readBody(req,4096)).toString('utf8'));const input=ResultCheckoutInput.parse({plan:params.get('plan'),period:params.get('period'),terms_accepted:params.get('terms_accepted')});
-    const disclosure=checkoutDisclosure(input.plan,input.period);const acceptanceId=await repository.recordCheckoutAcceptance({email:audit.email,plan:input.plan,period:input.period,termsVersion:TERMS_VERSION,privacyVersion:PRIVACY_VERSION,disclosureVersion:CHECKOUT_DISCLOSURE_VERSION,disclosureText:disclosure,ipAddress:ip,userAgent:String(req.headers['user-agent']??'unknown'),source:'free_audit_result'});
-    const returnUrl=new URL('/free-audit/result',config.publicUrl);returnUrl.searchParams.set('token',token);const session=await createCheckoutSession(audit.email,input.plan,input.period,returnUrl.href,acceptanceId);if(!session.url)throw new Error('STRIPE_CHECKOUT_URL_MISSING');
-    await repository.recordFunnelEvent(audit.id,'checkout_started',{plan:input.plan,period:input.period,recommended_plan:audit.recommended_plan}).catch(()=>{});info('free_audit.checkout.created',{request_id:traceId,audit_request_id:audit.id,plan:input.plan,period:input.period});
+    const params=new URLSearchParams((await readBody(req,4096)).toString('utf8'));const input=ResultCheckoutInput.parse({plan:params.get('plan'),period:params.get('period')});
+    const returnUrl=new URL('/free-audit/result',config.publicUrl);returnUrl.searchParams.set('token',token);const session=await createCheckoutSession(audit.email,input.plan,input.period,returnUrl.href);if(!session.url)throw new Error('STRIPE_CHECKOUT_URL_MISSING');
+    await repository.recordFunnelEvent(audit.id,'checkout_started',{plan:input.plan,period:input.period,recommended_plan:audit.recommended_plan}).catch(error=>failure('free_audit.funnel_event.failed',error,{request_id:traceId,audit_request_id:audit.id,event_name:'checkout_started'}));info('free_audit.checkout.created',{request_id:traceId,audit_request_id:audit.id,plan:input.plan,period:input.period});
     if(req.headers.accept?.includes('application/json')){respond(res,200,{url:session.url});return true;}
     res.writeHead(303,{Location:session.url,'Cache-Control':'no-store'});res.end();return true;
-   }catch(error){if(error instanceof z.ZodError||error instanceof HttpError){respond(res,error instanceof HttpError?error.status:400,{error:error instanceof HttpError?error.code:'invalid_request'});return true;}failure('free_audit.checkout.failed',error,{request_id:traceId});respond(res,503,{error:'temporarily_unavailable'});return true;}
+    }catch(error){if(error instanceof z.ZodError||error instanceof HttpError){respond(res,error instanceof HttpError?error.status:400,{error:error instanceof HttpError?error.code:'invalid_request'});return true;}failure('free_audit.checkout.failed',error,{request_id:traceId});respond(res,503,{error:'temporarily_unavailable'});return true;}
   }
   if(unsubscribe&&(req.method==='GET'||req.method==='POST')){
    const token=url.searchParams.get('token')??'';const valid=/^[A-Za-z0-9_-]{43}$/.test(token);
@@ -195,14 +200,14 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     const token=url.searchParams.get('token')??'';const hash=/^[A-Za-z0-9_-]{43}$/.test(token)?tokenHash(token):'';
     const audit=hash?await repository.publicResult(hash):null;
     if(!audit?.result){page(res,404,`<main class="shell"><section class="copy"><h1>This private result is unavailable.</h1><p>The link may be incomplete or expired.</p></section><section class="card"><div class="status">!</div><h2>Need help?</h2><p>Reply to your Olympian audit email and our team can help.</p></section></main>`,'Audit result unavailable');return true;}
-    if(continueResult){const requested=url.searchParams.get('plan');const selected=requested==='core'||requested==='growth'||requested==='scale'?requested:audit.recommended_plan;await repository.recordFunnelEvent(audit.id,'pricing_viewed',{recommended_plan:audit.recommended_plan,selected_plan:selected}).catch(()=>{});const target=new URL(config.offerUrl);target.searchParams.set('plan',selected);res.writeHead(303,{Location:target.href,'Cache-Control':'no-store'});res.end();return true;}
+    if(continueResult){const requested=url.searchParams.get('plan');const selected=requested==='core'||requested==='growth'||requested==='scale'?requested:audit.recommended_plan;await repository.recordFunnelEvent(audit.id,'pricing_viewed',{recommended_plan:audit.recommended_plan,selected_plan:selected}).catch(error=>failure('free_audit.funnel_event.failed',error,{request_id:requestId(req),audit_request_id:audit.id,event_name:'pricing_viewed'}));const target=new URL(config.offerUrl);target.searchParams.set('plan',selected);res.writeHead(303,{Location:target.href,'Cache-Control':'no-store'});res.end();return true;}
     const format=url.searchParams.get('format');
     if(format==='pdf'||format==='csv'){
-     await repository.recordFunnelEvent(audit.id,'report_downloaded',{format}).catch(()=>{});
+     await repository.recordFunnelEvent(audit.id,'report_downloaded',{format}).catch(error=>failure('free_audit.funnel_event.failed',error,{request_id:requestId(req),audit_request_id:audit.id,event_name:'report_downloaded'}));
      const content=format==='pdf'?freeAuditPdf(audit.company_name,audit.result):freeAuditCsv(audit.result);
      const filename=`olympian-free-audit.${format}`;res.writeHead(200,{'Content-Type':format==='pdf'?'application/pdf':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="${filename}"`,'Content-Length':String(content.length),'Cache-Control':'no-store, private','X-Content-Type-Options':'nosniff'});res.end(content);return true;
     }
-    await repository.recordFunnelEvent(audit.id,'result_opened').catch(()=>{});page(res,200,nonce=>resultPage(audit,token,nonce)+supportWidget(nonce),`Your Olympian audit — ${money(audit.result.valor_total_under_review)} under review`);return true;
+    await repository.recordFunnelEvent(audit.id,'result_opened').catch(error=>failure('free_audit.funnel_event.failed',error,{request_id:requestId(req),audit_request_id:audit.id,event_name:'result_opened'}));page(res,200,nonce=>withoutCheckoutConsent(resultPage(audit,token,nonce))+supportWidget(nonce),`Your Olympian audit — ${money(audit.result.valor_total_under_review)} under review`);return true;
    }catch(error){failure('free_audit.result.failed',error,{request_id:requestId(req)});respond(res,503,{error:'temporarily_unavailable'});return true;}
   }
   if((submit||checkout)&&req.method==='OPTIONS'){
@@ -221,10 +226,9 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     if(!(await verifyTurnstile(input.turnstile_token,ip))){respond(res,403,{error:'security_verification_failed'});return true;}
     const emailRate=await limiter.consume({scope:'checkout-public-email',key:privacyKey(input.email),limit:3,windowSeconds:86400,failClosed:true});
     if(!emailRate.allowed){res.setHeader('Retry-After',String(emailRate.retryAfter));respond(res,429,{error:'too_many_requests'});return true;}
-    const disclosure=checkoutDisclosure(input.plan,input.period);const acceptanceId=await repository.recordCheckoutAcceptance({email:input.email,plan:input.plan,period:input.period,termsVersion:TERMS_VERSION,privacyVersion:PRIVACY_VERSION,disclosureVersion:CHECKOUT_DISCLOSURE_VERSION,disclosureText:disclosure,ipAddress:ip,userAgent:String(req.headers['user-agent']??'unknown'),source:'public_pricing'});
-    const session=await createCheckoutSession(input.email,input.plan,input.period,undefined,acceptanceId);
+    const session=await createCheckoutSession(input.email,input.plan,input.period);
     if(!session.url)throw new Error('STRIPE_CHECKOUT_URL_MISSING');
-    await repository.recordCheckoutStarted(input.email,{plan:input.plan,period:input.period}).catch(()=>{});
+    await repository.recordCheckoutStarted(input.email,{plan:input.plan,period:input.period}).catch(error=>failure('free_audit.funnel_event.failed',error,{request_id:traceId,event_name:'checkout_started'}));
     info('checkout.public.created',{request_id:traceId,plan:input.plan,period:input.period});respond(res,200,{url:session.url});return true;
    }catch(error){
     if(error instanceof z.ZodError||error instanceof SyntaxError){respond(res,400,{error:'invalid_request'});return true;}

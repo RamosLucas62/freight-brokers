@@ -3,16 +3,7 @@ import type {AuditReport} from '../types/report.types.js';
 import type {FreeAuditAttachment,FreeAuditFollowup,FreeAuditPublicResult,FreeAuditRegistration,FreeAuditRequest} from './types.js';
 import {createHash} from 'node:crypto';
 import {recommendedPlan} from './recommendation.js';
-import type {BillingPeriod,PlanCode} from '../billing/plans.js';
 import {warn} from '../observability/logger.js';
-
-export async function recordCheckoutAcceptance(input:{email:string;plan:PlanCode;period:BillingPeriod;termsVersion:string;privacyVersion:string;disclosureVersion:string;disclosureText:string;ipAddress:string;userAgent:string;source:'public_pricing'|'free_audit_result'}):Promise<string>{
- const {data,error}=await getSupabaseClient().rpc('record_checkout_acceptance',{
-  p_email:input.email,p_plan:input.plan,p_period:input.period,p_terms_version:input.termsVersion,p_privacy_version:input.privacyVersion,p_disclosure_version:input.disclosureVersion,p_disclosure_text:input.disclosureText,p_ip_address:input.ipAddress,p_user_agent:input.userAgent,p_source:input.source,
- });
- if(error||typeof data!=='string')throw new Error('CHECKOUT_ACCEPTANCE_FAILED');
- return data;
-}
 
 export async function registerRequest(input:{email:string;name:string;company:string;phone?:string;loads?:string;tokenHash:string;ipFingerprint:string;attribution?:{utm_source?:string;utm_medium?:string;utm_campaign?:string;utm_term?:string;utm_content?:string}}):Promise<FreeAuditRegistration>{
  const {data,error}=await getSupabaseClient().rpc('register_free_audit_request',{
