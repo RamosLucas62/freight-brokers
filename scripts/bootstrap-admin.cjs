@@ -1,7 +1,8 @@
 require('dotenv/config');
 const {createClient}=require('@supabase/supabase-js');
-const email=process.argv[2]?.trim().toLowerCase();
-if(!email||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){console.error('Usage: node scripts/bootstrap-admin.cjs owner@example.com');process.exit(1);}
+const defaultAdminEmail='ramos.lucas@aiolympian.com';
+const email=(process.argv[2]??defaultAdminEmail).trim().toLowerCase();
+if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){console.error(`Usage: node scripts/bootstrap-admin.cjs [email] (default: ${defaultAdminEmail})`);process.exit(1);}
 if(!process.env.SUPABASE_URL||!process.env.SUPABASE_SERVICE_ROLE_KEY){console.error('Configure the Supabase backend environment first.');process.exit(1);}
 (async()=>{
  const db=createClient(process.env.SUPABASE_URL,process.env.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});

@@ -7,7 +7,7 @@ O servidor existente serve o painel em `/`, sem serviço de frontend separado. O
 1. Aplicar as migrações com `npm run db:migrate`. A migração 004 cria as revisões; a 005 adiciona administradores globais, controle de acesso e histórico administrativo.
 2. Configurar `PORTAL_URL` com a origem pública exata (exemplo: `https://painel.suaempresa.com`) e `SUPABASE_ANON_KEY` com a chave pública do mesmo projeto Supabase. A chave de serviço permanece exclusivamente no servidor.
 3. No Supabase Auth, habilitar login por e-mail, configurar SMTP para entrega aos clientes e adicionar `PORTAL_URL/auth/callback` à lista de Redirect URLs. O template Magic Link deve usar `{{ .ConfirmationURL }}`. Referência: https://supabase.com/docs/guides/auth/auth-email-passwordless
-4. Criar o usuário proprietário no Supabase Auth e executar `node scripts/bootstrap-admin.cjs SEU_EMAIL` com o ambiente de backend configurado. O comando atribui o primeiro administrador somente se nenhum administrador existir. Em seguida, o proprietário pode cadastrar clientes e usuários pelo painel. Não há administrador padrão nem promoção por domínio de e-mail.
+4. Criar `ramos.lucas@aiolympian.com` no Supabase Auth e executar `node scripts/bootstrap-admin.cjs` com o ambiente de backend configurado. Esse é o e-mail administrativo padrão do utilitário; ainda é possível informar outro e-mail como argumento quando necessário. O comando atribui o primeiro administrador somente se nenhum administrador existir. Em seguida, o proprietário pode cadastrar clientes e usuários pelo painel. Não há promoção automática por domínio de e-mail.
 5. Executar `npm run build` e `npm run start:server`, ou reconstruir a imagem Docker. Habilitar `WORKER_ENABLED=true` no serviço responsável pela fila para processar reenvios.
 
 ## Assinatura e onboarding
@@ -51,7 +51,7 @@ Eventos usados: `checkout.session.completed`, `customer.subscription.updated` e 
 
 ## Idioma e acesso administrativo
 
-A interface, as mensagens da API e a demonstração usam inglês americano (`en-US`), valores em USD e datas no padrão americano. Os horários seguem o fuso do navegador. As notas digitadas e os documentos dos clientes preservam seu conteúdo original. O template de e-mail do Supabase também deve ser configurado em inglês na ativação.
+O painel administrativo usa português do Brasil (`pt-BR`). O portal do cliente, os e-mails operacionais e os documentos continuam em inglês americano, com valores em USD. Os horários seguem o fuso do navegador. As notas digitadas e os documentos dos clientes preservam seu conteúdo original. O template de e-mail do Supabase também deve ser configurado em inglês na ativação.
 
 O papel de administrador global está implementado em `audit_admins`, com escrita reservada ao backend. Não usa metadados editáveis do usuário. As verificações são refeitas a cada solicitação; desabilitar o acesso invalida o uso de uma sessão já existente na próxima solicitação. A restrição também vale para as políticas RLS de leitura dos clientes.
 

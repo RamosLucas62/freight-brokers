@@ -21,7 +21,7 @@ export interface FreeAuditRequest {
 }
 
 export interface FreeAuditPublicResult extends FreeAuditRequest {recommended_plan:'core'|'growth'|'scale';}
-export interface FreeAuditFollowup {request_id:string;day_offset:1|3|5|10|30;email:string;contact_name:string;company_name:string;loads_per_month:string|null;recommended_plan:'core'|'growth'|'scale';result:AuditReport;}
+export interface FreeAuditFollowup {request_id:string;day_offset:1|3|5|10|30;delivery_sequence:number;email:string;contact_name:string;company_name:string;loads_per_month:string|null;recommended_plan:'core'|'growth'|'scale';result:AuditReport;}
 
 export interface FreeAuditAttachment {
  request_id:string;
