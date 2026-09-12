@@ -17,21 +17,24 @@ function clean(value:unknown,key=''):unknown{
 }
 
 export function errorFields(error:unknown):Fields{
- if(!(error instanceof Error))return {error_code:'UNKNOWN_ERROR',error_type:typeof error};
- if(error.name==='TimeoutError')return {error_code:'NETWORK_TIMEOUT',error_type:error.name};
+ const objectError=typeof error==='object'&&error!==null?error as Record<string,unknown>:undefined;
+ const message=error instanceof Error?error.message:typeof objectError?.message==='string'?objectError.message:'';
+ const name=error instanceof Error?error.name:typeof objectError?.name==='string'?objectError.name:objectError?'PostgrestError':typeof error;
+ if(name==='TimeoutError')return {error_code:'NETWORK_TIMEOUT',error_type:name};
  const known:[RegExp,string][]=[
+  [/Unknown Stripe subscription/i,'STRIPE_SUBSCRIPTION_NOT_READY'],
   [/(?:OpenRouter|Document classification|POD extraction|Rate confirmation extraction) (?:request )?failed or timed out/i,'OPENROUTER_TIMEOUT_OR_NETWORK'],[/(?:OpenRouter|Document classification|POD extraction|Rate confirmation extraction) (?:extraction )?failed \(HTTP (\d+)\)/i,'OPENROUTER_HTTP_ERROR'],[/(?:OpenRouter returned|POD provider returned|Rate confirmation provider returned) an incomplete/i,'OPENROUTER_INVALID_RESPONSE'],
   [/FMCSA request failed or timed out/i,'FMCSA_TIMEOUT_OR_NETWORK'],[/FMCSA lookup failed \(HTTP (\d+)\)/i,'FMCSA_HTTP_ERROR'],[/FMCSA returned an invalid response/i,'FMCSA_INVALID_RESPONSE'],[/FMCSA lookup returned no unique carrier/i,'FMCSA_NO_UNIQUE_CARRIER'],
   [/Expected exactly one invoice/i,'PDF_INVOICE_COUNT_INVALID'],[/Not a PDF/i,'INVALID_PDF'],[/File changed during extraction/i,'PDF_CHANGED_DURING_EXTRACTION'],[/Cross-account history rejected/i,'TENANT_ISOLATION_VIOLATION'],
  ];
- const matched=known.find(([pattern])=>pattern.test(error.message));
- const safeCode=/^[A-Z][A-Z0-9_]{2,100}$/.test(error.message)?error.message:matched?.[1]??(error.name==='Error'?'UNCLASSIFIED_ERROR':`${error.name.replace(/[^A-Za-z0-9]/g,'_').toUpperCase()}_ERROR`);
- const upstreamMatch=error.message.match(/HTTP (\d{3})/i);
- const status=typeof error==='object'&&error!==null&&'$metadata' in error
-  ?(error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode:undefined;
- const providerReason='providerReason' in error&&typeof (error as {providerReason?:unknown}).providerReason==='string'?(error as {providerReason:string}).providerReason:undefined;
- const providerCode='providerCode' in error&&typeof (error as {providerCode?:unknown}).providerCode==='string'?(error as {providerCode:string}).providerCode:undefined;
- return {error_code:safeCode,error_type:error.name,...(status||upstreamMatch?{upstream_status:status??Number(upstreamMatch?.[1])}:{}),...(providerReason?{provider_reason:providerReason}:{}),...(providerCode?{provider_code:providerCode}:{})};
+ const matched=known.find(([pattern])=>pattern.test(message));
+ const safeCode=/^[A-Z][A-Z0-9_]{2,100}$/.test(message)?message:matched?.[1]??(error instanceof Error&&name==='Error'?'UNCLASSIFIED_ERROR':name==='PostgrestError'?'DATABASE_ERROR':`${name.replace(/[^A-Za-z0-9]/g,'_').toUpperCase()}_ERROR`);
+ const upstreamMatch=message.match(/HTTP (\d{3})/i);
+ const status=objectError&&'$metadata' in objectError
+  ?(objectError as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode:undefined;
+ const providerReason=typeof objectError?.providerReason==='string'?objectError.providerReason:undefined;
+ const providerCode=typeof objectError?.providerCode==='string'?objectError.providerCode:undefined;
+ return {error_code:safeCode,error_type:name,...(status||upstreamMatch?{upstream_status:status??Number(upstreamMatch?.[1])}:{}),...(providerReason?{provider_reason:providerReason}:{}),...(providerCode?{provider_code:providerCode}:{})};
 }
 
 export function log(level:Level,event:string,fields:Fields={}):void{

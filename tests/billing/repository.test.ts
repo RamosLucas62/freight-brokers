@@ -1,7 +1,8 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 const rpc=vi.fn();
 vi.mock('../../src/config/supabase.js',()=>({getSupabaseClient:()=>({rpc})}));
-import {processStripeEvent} from '../../src/billing/repository.js';
+vi.mock('../../src/notifications/google-chat.sender.js',()=>({notifyLeadFunnel:vi.fn().mockResolvedValue(undefined),notifyOperationalError:vi.fn().mockResolvedValue(undefined)}));
+import {processNextStripeEvent,processStripeEvent} from '../../src/billing/repository.js';
 
 beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('STRIPE_PRICE_GROWTH_ANNUAL','price_growth_year');rpc.mockResolvedValue({data:true,error:null});});
 describe('Stripe webhook persistence',()=>{
@@ -26,5 +27,15 @@ describe('Stripe webhook persistence',()=>{
  it('maps Payment Link subscriptions using their Stripe amount and cadence',async()=>{
   await processStripeEvent({id:'evt_5',type:'customer.subscription.updated',created:125,data:{object:{id:'sub_5',status:'trialing',items:{data:[{price:{id:'price_unknown',unit_amount:808200,currency:'usd',recurring:{interval:'month',interval_count:6}}}]}}}});
   expect(rpc).toHaveBeenLastCalledWith('sync_billing_plan_from_stripe',{p_subscription_id:'sub_5',p_plan:'scale',p_period:'semiannual'});
+ });
+ it('defers invoice events when their checkout subscription is not ready yet',async()=>{
+  const errorWrite=vi.spyOn(process.stderr,'write').mockImplementation(()=>true);
+  rpc
+   .mockResolvedValueOnce({data:[{event_id:'evt_invoice',event_type:'invoice.paid',event_created:126,payload:{id:'evt_invoice',type:'invoice.paid',created:126,data:{object:{subscription:'sub_new'}}},attempts:1}],error:null})
+   .mockResolvedValueOnce({data:null,error:{code:'P0001',message:'Unknown Stripe subscription',details:null}})
+   .mockResolvedValueOnce({data:null,error:null});
+  await expect(processNextStripeEvent()).resolves.toBe(true);
+  expect(rpc).toHaveBeenLastCalledWith('finish_stripe_webhook',{p_event_id:'evt_invoice',p_success:false,p_error:'STRIPE_SUBSCRIPTION_NOT_READY'});
+  expect(errorWrite).not.toHaveBeenCalled();
  });
 });
