@@ -25,8 +25,10 @@ export const duplicateExactRule: IRule = {
 
     const exceptions: RuleException[] = [];
 
-    for (const [numero, group] of byNumber.entries()) {
+    for (const group of byNumber.values()) {
       if (group.length > 1) {
+        const duplicateIds = group.map(invoice => invoice.id).sort();
+        const duplicateGroupKey = JSON.stringify(duplicateIds);
         for (const inv of group) {
           exceptions.push({
             invoice_id:      inv.id,
@@ -36,9 +38,10 @@ export const duplicateExactRule: IRule = {
             source_file:     inv.source_file,
             source_page:     null,
             metadata:        {
+              duplicate_group_key: duplicateGroupKey,
               numero_fatura:  inv.numero_fatura.trim().toLowerCase(),
               duplicate_count: group.length,
-              duplicate_ids:  group.map(i => i.id),
+              duplicate_ids:  duplicateIds,
             },
           });
         }
