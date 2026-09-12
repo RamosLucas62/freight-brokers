@@ -30,6 +30,7 @@ describe('DUPLICATE_EXACT rule', () => {
     const result = await duplicateExactRule.evaluate(invoices, noopGetCarrier, ctx);
     expect(result).toHaveLength(2);
     expect(result.every(e => e.tipo_regra === 'DUPLICATE_EXACT')).toBe(true);
+    expect(new Set(result.map(e=>e.metadata.duplicate_group_key)).size).toBe(1);
   });
 
   it('flags all invoices when 3 share the same number', async () => {

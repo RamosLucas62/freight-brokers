@@ -31,6 +31,11 @@ export async function processStripeEvent(event:StripeEvent){
  if(event.type==='checkout.session.completed'&&data){
   const object=event.data.object;
   const customerDetails=typeof object.customer_details==='object'&&object.customer_details?object.customer_details as Record<string,unknown>:{};
+  const acceptanceId=typeof object.client_reference_id==='string'?object.client_reference_id:'';
+  if(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(acceptanceId)){
+   const linked=await getSupabaseClient().rpc('confirm_checkout_acceptance',{p_acceptance_id:acceptanceId,p_checkout_session_id:String(object.id??''),p_billing_email:typeof customerDetails.email==='string'?customerDetails.email:null,p_stripe_customer_id:typeof object.customer==='string'?object.customer:null,p_stripe_subscription_id:typeof object.subscription==='string'?object.subscription:null});
+   if(linked.error)throw linked.error;
+  }
   const metadata=typeof object.metadata==='object'&&object.metadata?object.metadata as Record<string,unknown>:{};
   void notifyLeadFunnel({stage:'client_signed',requestId:String(object.id??event.id),email:typeof customerDetails.email==='string'?customerDetails.email:undefined,metadata:{plan:metadata.plan_code??metadata.plan,period:metadata.billing_period,subscription:object.subscription??null}}).catch(()=>{});
  }

@@ -104,6 +104,13 @@ describe('audit transaction boundary', () => {
     expect((opts.store.commit.mock.calls as any)[0][1]).toEqual(expect.arrayContaining([expect.objectContaining({ tipo_regra: 'RATE_CONFIRMATION_MISMATCH' })]));
     expect((opts.store.commit.mock.calls as any)[0][2].reconciliation).toMatchObject({ divergent: 1, supporting_documents: 2 });
   });
+  it('does not mark a standalone invoice unverifiable when no supporting documents were supplied',async()=>{
+    const opts={...options(),reconcileSupportingDocuments:true,pods:[],rateConfirmations:[]};
+    const report=await runAuditPipeline(opts);
+    expect(report.confidence).toMatchObject({unverifiable:0});
+    expect(report.reconciliation).toEqual({matched:0,divergent:0,unverifiable:0,unbilled_revenue:0,supporting_documents:0});
+    expect(report.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining('matching POD')]));
+  });
 });
 
 describe('tenant isolation', () => {

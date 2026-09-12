@@ -71,7 +71,8 @@ export async function runAuditPipeline(options: PipelineOptions): Promise<AuditR
     const input = historicalRules.has(rule.name) ? [...history, ...invoices] : invoices;
     exceptions.push(...(await rule.evaluate(input, getCarrier, ruleContext)).filter(ex => currentIds.has(ex.invoice_id)));
   }
-  const reconciliation=options.reconcileSupportingDocuments
+  const hasSupportingDocuments=Boolean((options.pods?.length??0)+(options.rateConfirmations?.length??0));
+  const reconciliation=options.reconcileSupportingDocuments&&hasSupportingDocuments
    ?reconcileDocuments(invoices,options.pods??[],options.rateConfirmations??[],Number(process.env.SUPPORTING_DOCUMENT_CONFIDENCE_THRESHOLD??0.9))
    :{exceptions:[],summary:{matched:0,divergent:0,unverifiable:0,unbilled_revenue:0,supporting_documents:0},warnings:[]};
   exceptions.push(...reconciliation.exceptions);
