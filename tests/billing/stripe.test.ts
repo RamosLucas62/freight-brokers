@@ -16,10 +16,10 @@ afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();vi.clearAllMocks();});
 
 describe('Stripe subscription actions',()=>{
  it('selects the matching Stripe Payment Link and pre-fills the customer email',async()=>{
-  const session=await createCheckoutSession('buyer@example.com','growth','semiannual',undefined,'22222222-2222-4222-8222-222222222222');const url=new URL(session.url!);
+  const session=await createCheckoutSession('buyer@example.com','growth','semiannual');const url=new URL(session.url!);
   expect(url.origin+url.pathname).toBe('https://buy.stripe.com/test_bJe7sDfL459t1p95gNcQU06');
   expect(url.searchParams.get('prefilled_email')).toBe('buyer@example.com');
-  expect(url.searchParams.get('client_reference_id')).toBe('22222222-2222-4222-8222-222222222222');
+  expect(url.searchParams.get('client_reference_id')).toBeNull();
   expect(fetchMock).not.toHaveBeenCalled();
  });
  it('uses the same Payment Link from public and private checkout surfaces',async()=>{

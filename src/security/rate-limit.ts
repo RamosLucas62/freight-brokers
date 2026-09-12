@@ -1,6 +1,7 @@
 import {createHmac} from 'node:crypto';
 import {isIP} from 'node:net';
 import Redis from 'ioredis';
+import {failure} from '../observability/logger.js';
 
 export interface RateLimitRule {scope:string;key:string;limit:number;windowSeconds:number;failClosed?:boolean;}
 export interface RateLimitResult {allowed:boolean;limit:number;remaining:number;retryAfter:number;}
@@ -50,7 +51,7 @@ export function createRateLimiter(url=process.env.REDIS_URL):RateLimiter {
   };
  }
  const redis=new Redis(url,{enableOfflineQueue:false,maxRetriesPerRequest:1,connectTimeout:3000,lazyConnect:true,retryStrategy:times=>Math.min(times*200,2000)});
- redis.on('error',error=>console.error('[rate-limit] Redis unavailable',error.message));
+ redis.on('error',error=>failure('rate_limit.redis.unavailable',error));
  return {
   async consume(rule){
    try{
@@ -59,7 +60,7 @@ export function createRateLimiter(url=process.env.REDIS_URL):RateLimiter {
     const result=await redis.eval(script,1,id,String(rule.windowSeconds)) as [number,number];
     const count=Number(result[0]);return {allowed:count<=rule.limit,limit:rule.limit,remaining:Math.max(0,rule.limit-count),retryAfter:Math.max(1,Number(result[1]))};
    }catch(error){
-    console.error('[rate-limit] Check failed',error instanceof Error?error.message:'unknown');
+    failure('rate_limit.check.failed',error,{scope:rule.scope,fail_closed:Boolean(rule.failClosed)});
     return {allowed:!rule.failClosed,limit:rule.limit,remaining:0,retryAfter:5};
    }
   },

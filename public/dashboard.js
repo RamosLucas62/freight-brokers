@@ -40,6 +40,20 @@ function renderProductGuide(){
 }
 function openProductGuide(){if(!currentUser||currentUser.is_admin)return;productGuideStep=0;renderProductGuide();const dialog=$('product-guide');if(!dialog.open)dialog.showModal();requestAnimationFrame(()=>$('guide-title').focus());}
 function closeProductGuide(openQueue=false){const dialog=$('product-guide');if(dialog.open)dialog.close();if(currentUser)currentUser.show_guide=false;api('guide/complete',{method:'POST',body:'{}'}).catch(()=>message('The guide was closed, but we could not save that preference. It may appear again the next time you sign in.'));if(openQueue)navigateToView('jobs');}
+async function continueCustomerOnboarding(){
+ if(!companies.length){$('company').innerHTML='<option>No company assigned</option>';message('Your account is active, but no company has been assigned. Contact your account administrator.');render();return;}
+ await load();if(currentUser.show_guide)openProductGuide();
+}
+function openLegalAcceptance(){
+ $('legal-acceptance-versions').textContent=`Terms version ${currentUser.terms_version} · Privacy version ${currentUser.privacy_version}`;
+ const dialog=$('legal-acceptance');if(!dialog.open)dialog.showModal();requestAnimationFrame(()=>$('accept-terms').focus());
+}
+$('legal-acceptance').addEventListener('cancel',event=>event.preventDefault());
+$('legal-acceptance-form').addEventListener('submit',async event=>{
+ event.preventDefault();const button=event.submitter;button.disabled=true;$('legal-acceptance-message').textContent='Recording your acceptance…';
+ try{await api('legal/accept',{method:'POST',body:JSON.stringify({terms_accepted:true,privacy_acknowledged:true})});currentUser.requires_legal_acceptance=false;$('legal-acceptance').close();await continueCustomerOnboarding();}
+ catch(error){$('legal-acceptance-message').textContent=error.message;button.disabled=false;}
+});
 async function initializeSecurity(){
  try{const config=await api('security-config');if(!config.turnstile_site_key)return;await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';script.async=true;script.onload=resolve;script.onerror=reject;document.head.append(script);});turnstileWidgets.login=turnstile.render('#login-turnstile',{sitekey:config.turnstile_site_key});}catch{$('login-message').textContent='Security verification could not be loaded. Refresh the page.';}
 }
@@ -122,8 +136,8 @@ async function initialize(){
  const me=await api('me');currentUser=me;companies=me.companies??[];$('login').hidden=true;$('portal').hidden=false;$('account-email').textContent=me.email;$('open-guide').hidden=me.is_admin;
  if(me.is_admin){adminPortal.start(me,{api,onOpen:openCompany,onNavigate:()=>{requestId++;$('refresh').disabled=false;message('');}});return;}
  $('company').innerHTML=companies.map(c=>`<option value="${escape(c.id)}">${escape(c.name)}</option>`).join('');
- if(!companies.length){$('company').innerHTML='<option>No company assigned</option>';message('Your account is active, but no company has been assigned. Contact your account administrator.');render();return;}
- await load();if(me.show_guide)openProductGuide();
+ if(me.requires_legal_acceptance){openLegalAcceptance();return;}
+ await continueCustomerOnboarding();
  }catch(error){$('login-message').textContent=error.message;}
 }
 function openCompany(company){

@@ -38,7 +38,10 @@ export function log(level:Level,event:string,fields:Fields={}):void{
  const record=clean({timestamp:new Date().toISOString(),level,service:'freight-audit',event,...fields}) as Fields;
  const line=JSON.stringify(record);
  (level==='error'?process.stderr:process.stdout).write(`${line}\n`);
- if(level==='error')void notifyOperationalError(record).catch(()=>{});
+ if(level==='error')void notifyOperationalError(record).catch(error=>{
+  const fallback=clean({timestamp:new Date().toISOString(),level:'error',service:'freight-audit',event:'google_chat.error_notification.failed',original_event:event,...errorFields(error)});
+  process.stderr.write(`${JSON.stringify(fallback)}\n`);
+ });
 }
 export const info=(event:string,fields:Fields={})=>log('info',event,fields);
 export const warn=(event:string,fields:Fields={})=>log('warn',event,fields);

@@ -18,10 +18,9 @@ async function stripe(path:string,init:RequestInit={}){
  if(!response.ok)throw new Error(typeof data.error?.message==='string'?data.error.message:'STRIPE_REQUEST_FAILED');
  return data;
 }
-export async function createCheckoutSession(email:string,plan:PlanCode,period:BillingPeriod,_cancelUrl?:string,clientReferenceId?:string){
+export async function createCheckoutSession(email:string,plan:PlanCode,period:BillingPeriod,_cancelUrl?:string){
  const url=new URL(paymentLink(plan,period));
  url.searchParams.set('prefilled_email',email);
- if(clientReferenceId)url.searchParams.set('client_reference_id',clientReferenceId);
  return {id:`payment-link-${plan}-${period}`,url:url.href,status:'open'} satisfies StripeCheckoutSession;
 }
 export async function retrieveCheckoutSession(id:string){

@@ -1,38 +1,31 @@
-# U.S. checkout consent setup
+# U.S. portal consent setup
 
-The application now requires affirmative clickwrap consent before it returns a Stripe Payment Link. It stores the exact disclosure, document versions, server timestamp, plan, cadence, email, IP address, user agent, and checkout source. A random acceptance ID is passed to Stripe as `client_reference_id` and linked back when `checkout.session.completed` arrives.
+Olympian collects contractual clickwrap consent after the customer's first authenticated portal login and before the product guide or any customer data is available. Checkout remains focused on plan selection and payment.
 
-## Stripe dashboard (required for all nine Payment Links)
+## Customer experience
 
-1. Open **More → Product catalog → Payment links**.
-2. Open each Core, Growth, and Scale link for Monthly, 6 months, and Annual.
-3. Select **Edit**, then **Advanced options**.
-4. Enable **Require customers to accept your terms of service**.
-5. In **Settings → Public details**, set the Terms of Service URL to `https://api.audit.aiolympian.com/terms` and the Privacy Policy URL to `https://api.audit.aiolympian.com/privacy`.
-6. Confirm the 7-day trial, post-trial amount, recurring cadence, and cancellation messaging on each link.
+1. The customer completes Stripe Checkout and configures the workspace.
+2. The secure access email signs the customer into the portal.
+3. A blocking dialog links directly to the current Terms of Service and Privacy Policy.
+4. Both unchecked confirmations are required.
+5. After acceptance is stored, the product onboarding guide opens.
 
-The app-level checkbox is the evidence-bearing acceptance. Stripe's checkbox provides a second clear confirmation on the hosted payment page.
+The dialog cannot be dismissed with Escape, and customer APIs remain blocked until the current terms and privacy versions have been accepted. Administrators are exempt from the customer onboarding dialog.
 
-## Public pricing integration
+## Evidence recorded
 
-The JSON sent to `POST /checkout` must include:
+Migration `031_portal_legal_acceptance.sql` stores an immutable record containing the authenticated user, exact acceptance wording, Terms version, Privacy version, server timestamp, IP address, and user agent. A new document version causes the dialog to appear again.
 
-```json
-{
-  "email": "buyer@example.com",
-  "plan": "core",
-  "period": "monthly",
-  "terms_accepted": true,
-  "turnstile_token": "..."
-}
-```
+## Stripe dashboard
 
-The checkbox must start unchecked, be required, and link directly to `/terms` and `/privacy`. Do not combine product-marketing consent with this contractual consent.
+Do not enable Stripe's optional Terms of Service checkbox if the intended product flow is portal-only consent. Stripe must still clearly display trial length, price, billing cadence, automatic renewal, and cancellation information for each Payment Link.
 
 ## Release checklist
 
-- Apply migration `027_checkout_legal_acceptance.sql` before deploying the application.
-- Verify a completed test checkout creates one row in `audit_checkout_acceptances` and later fills `checkout_completed_at` and `stripe_checkout_session_id`.
-- Confirm the Stripe webhook includes `client_reference_id`.
-- Have U.S. counsel insert the company's exact legal entity, principal address, governing state, and dispute forum before production launch.
-- Review privacy disclosures and vendor contracts whenever a processor or retention period changes.
+- Apply migration `031_portal_legal_acceptance.sql` before deploying the application.
+- Complete a test checkout and first login.
+- Confirm no legal checkbox appears on the sales or private-audit checkout page.
+- Confirm the portal dialog appears before the product guide and cannot be dismissed.
+- Confirm one row is created in `audit_portal_legal_acceptances` with the current versions and server timestamp.
+- Sign in again and confirm the dialog no longer appears for the accepted versions.
+- Have U.S. counsel review the final Terms, Privacy Policy, legal entity, governing state, dispute forum, trial, renewal, cancellation, and privacy disclosures before production launch.
