@@ -4,7 +4,7 @@ Backend preparado para `https://api.audit.aiolympian.com`. Este guia publica o r
 
 ## 1. Preparar o banco
 
-Aplique todas as migrações de `db/migrations/` em ordem numérica, atualmente até `032_portal_read_performance.sql`. Prefira `npm run db:migrate -- --check` e depois `npm run db:migrate`. Não execute novamente uma migração antiga isoladamente. A migração 003 cria a fila inbound; migrações posteriores acrescentam relatórios, cobrança, segurança, retry, confiança, CRM e índices necessários ao código atual.
+Aplique todas as migrações de `db/migrations/` em ordem numérica, atualmente até `033_admin_auth_user_access.sql`. Prefira `npm run db:migrate -- --check` e depois `npm run db:migrate`. Não execute novamente uma migração antiga isoladamente. A migração 003 cria a fila inbound; migrações posteriores acrescentam relatórios, cobrança, segurança, retry, confiança, CRM, índices e o acesso backend controlado aos usuários do painel administrativo.
 
 ## 2. Criar o bucket privado no R2
 
