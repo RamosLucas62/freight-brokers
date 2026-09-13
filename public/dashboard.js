@@ -26,6 +26,10 @@ const jobReason=(row={},report)=>({
 const names={jobs:'Processing queue',invoices:'Invoices',reports:'Reports',exceptions:'Exceptions',history:'Review history',settings:'Settings & billing'};
 const subtitles={jobs:'Track every document from submission to completion.',invoices:'View processed invoices for your company.',reports:'Audit results to support your decisions.',exceptions:'Review the issues that need a closer look.',history:'A record of every review and resubmission, with notes and timestamps.',settings:'Choose who receives reports and keep your subscription up to date.'};
 let view='jobs',page=0,rows=[],total=0,selected=null,requestId=0,companies=[],currentUser=null,settingsData=null;
+const DATA_CACHE_TTL=15000;
+const dataCache=new Map();
+const dataRequests=new Map();
+let activeLoadController=null;
 let turnstileWidgets={};
 const productGuideSteps=[
  {section:'WELCOME',title:'Your audit operation, at a glance.',description:'In about two minutes, you will know where documents enter, how the audit moves and where your team takes action.',points:['Send invoices and supporting documents to one private address.','Follow processing without chasing email threads.','Review findings with the source evidence and a complete history.'],stage:'Setup'},
@@ -147,13 +151,37 @@ function openCompany(company){
  document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view==='jobs');b.setAttribute('aria-current',b.dataset.view==='jobs'?'page':'false');});
  view='jobs';page=0;$('search').value='';$('status').value='';load();
 }
-async function load(silent=false){
+function cacheKey(company,requestedView,requestedPage){return `${company}:${requestedView}:${requestedPage}`;}
+function applyLoadedData(data,company,requestedView){
+ $('company-name').textContent=companies.find(c=>c.id===company)?.name??'YOUR OPERATION';
+ if(requestedView==='settings'){settingsData=data;renderSettings();return;}
+ rows=Array.isArray(data.rows)?data.rows.filter(row=>row&&typeof row==='object'):[];
+ const parsedTotal=Number(data.total);total=Number.isFinite(parsedTotal)?parsedTotal:rows.length;render();
+}
+function schedulePrefetch(company,requestedView){
+ if(requestedView==='settings')return;
+ const views=['jobs','invoices','reports','exceptions','history'].filter(item=>item!==requestedView);
+ const run=()=>views.reduce((promise,nextView)=>promise.then(()=>prefetch(company,nextView)),Promise.resolve());
+ if(typeof requestIdleCallback==='function')requestIdleCallback(()=>void run(),{timeout:1200});
+ else setTimeout(()=>void run(),150);
+}
+async function prefetch(company,requestedView){
+ const key=cacheKey(company,requestedView,0);const cached=dataCache.get(key);
+ if(cached&&Date.now()-cached.at<DATA_CACHE_TTL)return;
+ if(dataRequests.has(key))return dataRequests.get(key);
+ const request=api(`${requestedView}?company=${encodeURIComponent(company)}&page=0`).then(data=>{dataCache.set(key,{data,at:Date.now()});}).catch(()=>{}).finally(()=>dataRequests.delete(key));
+ dataRequests.set(key,request);return request;
+}
+async function load(silent=false,options={}){
  if(!$('company').value)return;
- const id=++requestId;const company=$('company').value;
- if(!silent){$('table-body').innerHTML='';$('empty').hidden=false;$('empty').textContent='Loading data…';}
+ const id=++requestId;const company=$('company').value;const requestedView=view;const requestedPage=page;const key=cacheKey(company,requestedView,requestedPage);const cached=dataCache.get(key);
+ if(activeLoadController)activeLoadController.abort();
+ activeLoadController=new AbortController();
+ if(cached&&!options.force&&!silent){applyLoadedData(cached.data,company,requestedView);if(Date.now()-cached.at<DATA_CACHE_TTL){schedulePrefetch(company,requestedView);return;}}
+ if(!cached&&!silent){$('empty').hidden=false;$('empty').textContent='Loading data…';}
  $('refresh').disabled=true;
- try{const data=await api(`${view}?company=${encodeURIComponent(company)}&page=${page}`);if(id!==requestId)return;message('');$('company-name').textContent=companies.find(c=>c.id===company)?.name??'YOUR OPERATION';if(view==='settings'){settingsData=data;renderSettings();}else{rows=Array.isArray(data.rows)?data.rows.filter(row=>row&&typeof row==='object'):[];const parsedTotal=Number(data.total);total=Number.isFinite(parsedTotal)?parsedTotal:rows.length;render();}}
- catch(error){if(id!==requestId)return;message(error.message);if(!silent&&view!=='settings'){rows=[];total=0;render();$('empty').textContent='Unable to load data. Select Refresh to try again.';}}
+ try{const data=await api(`${requestedView}?company=${encodeURIComponent(company)}&page=${requestedPage}`,{signal:activeLoadController.signal});if(id!==requestId||view!==requestedView||$('company').value!==company)return;dataCache.set(key,{data,at:Date.now()});message('');applyLoadedData(data,company,requestedView);schedulePrefetch(company,requestedView);}
+ catch(error){if(error?.name==='AbortError'||id!==requestId)return;message(error.message);if(!cached&&!silent&&requestedView!=='settings'){rows=[];total=0;render();$('empty').textContent='Unable to load data. Select Refresh to try again.';}}
  finally{if(id===requestId)$('refresh').disabled=false;}
 }
 function render(){
@@ -236,10 +264,10 @@ function showCancellation(step){
  if(step===3){const trial=billing.status==='trialing';html=`<h2 id="cancel-title">${trial?'Cancel your free trial?':'Confirm cancellation.'}</h2><p>${trial?'Your trial remains available until its scheduled end, then the account becomes inactive and your card is not charged.':'Service remains active until the end of your paid period. The account then becomes inactive.'} After a 30-day recovery window, invoices, PDFs, exceptions, reports, recipients and company settings are permanently deleted.</p><label for="cancel-confirm">Type CANCEL to confirm</label><input id="cancel-confirm" autocomplete="off"><div class="dialog-actions">${trial?'':'<button data-cancel-step="2">Go back</button>'}<button class="danger" id="confirm-cancel" disabled>${trial?'Cancel free trial':'Schedule cancellation'}</button></div>`;}
  $('cancel-content').innerHTML=html;$('cancel-message').textContent='';if(!$('cancel-dialog').open)$('cancel-dialog').showModal();
  document.querySelectorAll('[data-cancel-step]').forEach(button=>button.addEventListener('click',()=>showCancellation(Number(button.dataset.cancelStep))));
- $('accept-discount')?.addEventListener('click',async()=>{try{await billingRequest('retention-discount');$('cancel-dialog').close();await load();message('The 15% discount will be applied to your next billing period.');}catch(error){$('cancel-message').textContent=error.message;}});
- $('accept-pause')?.addEventListener('click',async()=>{try{await billingRequest('pause');$('cancel-dialog').close();await load();message('Your account is paused for 30 days. Your data remains protected.');}catch(error){$('cancel-message').textContent=error.message;}});
+ $('accept-discount')?.addEventListener('click',async()=>{try{await billingRequest('retention-discount');$('cancel-dialog').close();await load(false,{force:true});message('The 15% discount will be applied to your next billing period.');}catch(error){$('cancel-message').textContent=error.message;}});
+ $('accept-pause')?.addEventListener('click',async()=>{try{await billingRequest('pause');$('cancel-dialog').close();await load(false,{force:true});message('Your account is paused for 30 days. Your data remains protected.');}catch(error){$('cancel-message').textContent=error.message;}});
  const confirm=$('cancel-confirm');confirm?.addEventListener('input',()=>{$('confirm-cancel').disabled=confirm.value!=='CANCEL';});
- $('confirm-cancel')?.addEventListener('click',async()=>{try{await billingRequest('cancel');$('cancel-dialog').close();await load();message('Cancellation is scheduled for the end of the current billing period.');}catch(error){$('cancel-message').textContent=error.message;}});
+ $('confirm-cancel')?.addEventListener('click',async()=>{try{await billingRequest('cancel');$('cancel-dialog').close();await load(false,{force:true});message('Cancellation is scheduled for the end of the current billing period.');}catch(error){$('cancel-message').textContent=error.message;}});
 }
 function detail(row){
  selected=row;const report=row.report??row.result;
@@ -273,8 +301,8 @@ function navigateToView(nextView){const button=document.querySelector(`[data-vie
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>navigateToView(button.dataset.view)));
 $('open-guide').addEventListener('click',openProductGuide);$('exit-guide').addEventListener('click',()=>closeProductGuide());$('guide-previous').addEventListener('click',()=>{if(productGuideStep>0){productGuideStep--;renderProductGuide();$('guide-title').focus();}});$('guide-next').addEventListener('click',()=>{if(productGuideStep<productGuideSteps.length-1){productGuideStep++;renderProductGuide();$('guide-title').focus();}else closeProductGuide(true);});$('product-guide').addEventListener('cancel',event=>{event.preventDefault();closeProductGuide();});
 $('company').addEventListener('change',()=>{page=0;$('search').value='';$('status').value='';load();});
-$('search').addEventListener('input',render);$('status').addEventListener('change',render);
-$('previous').addEventListener('click',()=>{page--;load();});$('next').addEventListener('click',()=>{page++;load();});$('refresh').addEventListener('click',()=>{if(!$('admin-workspace').hidden)adminPortal.refresh();else load();});
+ $('search').addEventListener('input',render);$('status').addEventListener('change',render);
+ $('previous').addEventListener('click',()=>{page--;load();});$('next').addEventListener('click',()=>{page++;load();});$('refresh').addEventListener('click',()=>{if(!$('admin-workspace').hidden)adminPortal.refresh();else load(false,{force:true});});
 $('logout').addEventListener('click',async()=>{try{await api('logout',{method:'POST',body:'{}'});location.assign('/');}catch(error){message(error.message);}});
 setInterval(()=>{if(!$('portal').hidden&&!document.hidden&&!$('detail').open&&$('admin-workspace').hidden)load(true);},30000);
 initialize();

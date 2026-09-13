@@ -312,13 +312,9 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
    db.from('audit_invoice_usage').select('id',{count:'exact',head:true}).eq('tenant_id',tenant).gte('created_at',monthStart.toISOString()),
   ]);
   if(settings.error||contacts.error||billing.error||senders.error||usage.error)throw new Error('Settings lookup failed');
-  let bill=billing.data;
-  if(bill?.stripe_subscription_id){
-   try{const liveSelection=selectionFromSubscription(await retrieveSubscription(bill.stripe_subscription_id));if(liveSelection&&(liveSelection.plan!==bill.plan_code||liveSelection.period!==bill.billing_period)){
-    const synced=await serviceDb.rpc('sync_billing_plan_from_stripe',{p_subscription_id:bill.stripe_subscription_id,p_plan:liveSelection.plan,p_period:liveSelection.period});if(synced.error)throw synced.error;
-    const catalog=plans[liveSelection.plan];bill={...bill,plan_code:liveSelection.plan,billing_period:liveSelection.period,included_invoices:catalog.includedInvoices,overage_unit_amount_cents:catalog.overageCents};
-   }}catch(error){failure('portal.settings.billing_reconciliation_failed',error,{request_id:requestId(req),tenant});}
-  }
+  // Billing state is synchronized by Stripe webhooks. Reading Settings must stay
+  // a local portal query and should not wait on a live Stripe API call.
+  const bill=billing.data;
   const tenantRole=membership.data?.find(m=>m.tenant_id===tenant)?.role;
   const tenantDetails=membership.data?.find(m=>m.tenant_id===tenant)?.audit_tenants as {alias?:string}|undefined;const plan=plans[planFromMetadata(bill?.plan_code)];
   send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),audit_email:tenantDetails?.alias?`${tenantDetails.alias}@audit.aiolympian.com`:null,max_recipients:plan.maxRecipients,max_senders:plan.maxSenders,report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
