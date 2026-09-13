@@ -3,6 +3,13 @@ UPDATE auth.users SET email='admin-check-owner@example.com' WHERE id='20000000-0
 INSERT INTO auth.users(id,email) VALUES ('20000000-0000-4000-8000-000000000002','admin-check-customer@example.com'),('20000000-0000-4000-8000-000000000003','admin-check-second@example.com');
 SET LOCAL ROLE service_role;
 DO $$ BEGIN
+ BEGIN
+  PERFORM 1 FROM auth.users LIMIT 1;
+  RAISE EXCEPTION 'service_role unexpectedly has direct auth.users access';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+END $$;
+DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM public.audit_admins) THEN
  INSERT INTO public.audit_admins(user_id) VALUES('20000000-0000-4000-8000-000000000001');
  ELSE PERFORM public.portal_bootstrap_admin('admin-check-owner@example.com'); END IF;
