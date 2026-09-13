@@ -1,40 +1,45 @@
-# Pricing and usage billing
+# Preços e cobrança por uso
 
-The product has three USD plans. Growth is the recommended default.
+O produto tem três planos em USD. Growth é a recomendação padrão.
 
-| Plan | Included each month | Monthly | 6 months prepaid | Annual prepaid | Additional invoice |
+| Plano | Incluídas por mês | Mensal | 6 meses pré-pagos | Anual pré-pago | Fatura adicional |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Core | 500 | US$497 | US$2,682 | US$4,970 | US$0.75 |
 | Growth (Recommended) | 1,500 | US$997 | US$5,382 | US$9,970 | US$0.50 |
 | Scale | 3,000 | US$1,497 | US$8,082 | US$14,970 | US$0.50 |
 
-The included allowance resets each calendar month in the customer's configured time zone, including prepaid contracts. Overage is closed after month-end and charged automatically as a separate Stripe invoice against the saved payment method. The nine base prices remain the only catalog prices; an idempotent invoice item carries the monthly overage.
+A franquia reinicia a cada mês civil no fuso configurado da empresa, inclusive em contratos pré-pagos. O excedente fecha depois do fim do mês e é cobrado automaticamente em uma fatura Stripe separada usando o método salvo. Os nove preços-base permanecem como catálogo; um invoice item idempotente registra o excedente mensal.
 
-## What counts
+## O que conta
 
-- One accepted PDF containing exactly one extracted invoice counts once.
-- The same PDF hash for the same customer never counts twice, including a retry after an interrupted job.
-- Files rejected before extraction do not count.
-- A corrected document with different bytes and a different hash counts as a new invoice.
-- A PDF containing zero or multiple invoices is rejected and does not count.
-- Documents received while the account is suspended are blocked before download and extraction and do not count.
+- Um PDF aceito contendo exatamente uma invoice extraída conta uma vez.
+- O mesmo hash para a mesma empresa nunca conta duas vezes, inclusive em retry de job interrompido.
+- Arquivos rejeitados antes da extração não contam.
+- Um documento corrigido, com bytes e hash diferentes, conta como nova invoice.
+- PDF com zero ou múltiplas invoices é rejeitado e não conta.
+- POD e rate confirmation não contam.
+- Documentos recebidos com a conta suspensa são bloqueados antes da extração e não contam.
 
-## Entitlements
+## Recursos por plano
 
-Core includes one inbound address/flow, up to three portal users and report recipients, the current automatic risk checks, email reports, portal history and email support. Growth and Scale include multiple inbound flows, administrative history, exception reprocessing, priority email support and monthly risk summaries. Their recipients and users are commercially unlimited; the service keeps a high technical abuse ceiling of 500 entries per category.
+Core inclui um fluxo de entrada, até três usuários/destinatários, regras automáticas, relatórios por e-mail, histórico no portal e suporte por e-mail. Growth e Scale incluem múltiplos fluxos, histórico administrativo, reprocessamento de exceções, suporte prioritário e resumos mensais. Usuários e destinatários são comercialmente ilimitados nesses dois planos, com teto técnico de 500 entradas por categoria.
 
-The product must not claim rate auditing, rate-confirmation matching, accessorial validation or automatic money recovery until those features are implemented.
+Conciliação com rate confirmation e POD, validação de accessorial e identificação conservadora de receita não faturada estão implementadas. Isso não significa recuperação automática de dinheiro: todo achado continua sob revisão e somente um valor confirmado pelo cliente entra em “perda evitada”.
 
-## Stripe setup
+## Exemplo
 
-Create nine recurring prices and set their IDs in the `STRIPE_PRICE_CORE_*`, `STRIPE_PRICE_GROWTH_*` and `STRIPE_PRICE_SCALE_*` environment variables. Use interval counts 1 month, 6 months and 1 year respectively.
+Uma empresa Growth com 2.000 invoices em um mês usa 1.500 da franquia e 500 adicionais. O excedente é `500 × US$ 0,50 = US$ 250,00`, cobrado além da assinatura-base.
 
-Checkout buttons use the nine Stripe Payment Links declared in `src/billing/plans.ts`. The price IDs remain required so webhook and onboarding processing can map the completed Checkout Session back to its plan and billing period. The current links are Stripe test-mode links and must be replaced with live Payment Links before accepting a production customer.
+## Configuração Stripe
 
-After `checkout.session.completed`, the backend queues a welcome email with a `Set up your account` button. The link carries only the Stripe Checkout Session ID; the onboarding endpoint retrieves the session and subscription directly from Stripe, verifies the billing email and active payment or trial state, and only then provisions the workspace.
+Crie nove preços recorrentes e configure seus IDs em `STRIPE_PRICE_CORE_*`, `STRIPE_PRICE_GROWTH_*` e `STRIPE_PRICE_SCALE_*`. Use intervalos de 1 mês, 6 meses e 1 ano.
 
-Keep the Customer Portal configuration limited to payment-method changes, invoice history and plan switching at the end of the paid period. Cancellation remains disabled there because it runs through the in-product retention flow. Checkout and subscription metadata must preserve `plan_code` and `billing_period`; webhooks synchronize those values locally.
+Os botões usam os nove Payment Links declarados em `src/billing/plans.ts`. Os Price IDs continuam obrigatórios para mapear Checkout Session, plano e período. Os links atuais são de teste e devem ser substituídos por links live antes do primeiro cliente real.
 
-Renewal is automatic. Cancellation stops the next renewal without a prorated refund. A failed payment starts a three-day grace period; after it expires, new audits are suspended. A later paid invoice reactivates the account. Final subscription cancellation starts the existing 30-day data-deletion window.
+Depois de `checkout.session.completed`, o backend coloca o onboarding em uma fila idempotente. O link carrega somente o ID da Checkout Session; o endpoint consulta Stripe, valida e-mail e estado ativo/trial e só então provisiona o workspace.
 
-Apply migrations in numeric order through `014_three_tier_plans.sql` before deploying this version.
+Mantenha o Customer Portal limitado a forma de pagamento, histórico de faturas e troca de plano no fim do período. O cancelamento fica no fluxo de retenção do produto. Os metadados precisam preservar `plan_code` e `billing_period`; webhooks sincronizam esses valores no banco local.
+
+A renovação é automática. O cancelamento interrompe a próxima renovação sem reembolso proporcional. Falha de pagamento inicia três dias de carência; depois disso novas auditorias são suspensas. Uma fatura paga reativa a conta. O cancelamento definitivo inicia a janela de 30 dias para exclusão.
+
+Aplique todas as migrações em ordem, atualmente até `032_portal_read_performance.sql`. Consulte o [runbook operacional](operations-runbook.md).
