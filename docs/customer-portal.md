@@ -36,10 +36,10 @@ Eventos usados: `checkout.session.completed`, `customer.subscription.updated` e 
 
 ## Comportamento
 
-- Link mágico sem senha; o token é validado no servidor e guardado em cookie HttpOnly, SameSite=Lax e Secure em HTTPS. O fragmento de autenticação é removido imediatamente da URL. A sessão dura até uma hora, limitada pela validade do token Supabase; ao expirar é solicitado novo link. Não há refresh token no navegador.
+- Link mágico sem senha; access e refresh tokens são validados no servidor e guardados em cookies HttpOnly, SameSite=Strict e Secure em HTTPS. O fragmento de autenticação é removido imediatamente da URL. O access token dura até uma hora e o refresh token, até sete dias; o servidor renova a sessão automaticamente enquanto o refresh for válido. Somente depois disso um novo link é solicitado.
 - Toda consulta verifica o usuário no Supabase, seu acesso habilitado e seu papel no banco. Clientes precisam de vínculo; administradores globais podem selecionar qualquer empresa. Consultas operacionais sempre filtram a empresa no servidor. Não há acesso direto do navegador ao banco.
 - Faturas, relatórios, exceções e histórico têm paginação de 50 registros. Busca, status e indicadores são da página atual, conforme indicado na tela.
-- Atualização a cada 30 segundos com aba visível; o modal de revisão suspende atualização para preservar a leitura.
+- Atualização a cada 30 segundos com aba visível; o modal de revisão suspende atualização para preservar a leitura. Navegação usa cache curto de 15 segundos, prefetch e cancelamento de chamadas obsoletas. Dados de cobrança vêm do banco sincronizado pelos webhooks, sem chamada Stripe bloqueando a abertura da seção.
 - `completed` significa processamento concluído, podendo conter exceções — inclusive a validação de identidade da transportadora quando a FMCSA não retorna uma correspondência única. `needs_review` significa falha permanente ou falha temporária ainda presente depois das retentativas automáticas. `blocked` e `ignored` também são apresentados para não esconder registros existentes.
 - Revisar registra uma observação sem apagar exceções nem alterar automaticamente o status. Reenviar é permitido somente para `needs_review` ou `blocked` de empresa ativa. A operação verifica o estado com bloqueio de linha e registra a ação na mesma transação. O worker reutiliza extrações e relatórios já salvos.
 - Relatórios podem ser inspecionados e baixados em JSON. Os PDFs originais continuam privados no armazenamento; download de PDF não faz parte desta versão.

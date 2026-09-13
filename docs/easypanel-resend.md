@@ -4,7 +4,7 @@ Backend preparado para `https://api.audit.aiolympian.com`. Este guia publica o r
 
 ## 1. Preparar o banco
 
-Com as migrações 001 e 002 já aplicadas, execute **somente** o arquivo `db/migrations/003_inbound_queue.sql` completo no SQL Editor do Supabase. Ele cria a fila e os registros de metadados dos anexos. Os PDFs ficam no Cloudflare R2, não no Supabase Storage. Não altera as tabelas de CRM. Não execute novamente a migração 001 isolada: ela recria o índice global de hashes anterior ao isolamento por cliente.
+Aplique todas as migrações de `db/migrations/` em ordem numérica, atualmente até `032_portal_read_performance.sql`. Prefira `npm run db:migrate -- --check` e depois `npm run db:migrate`. Não execute novamente uma migração antiga isoladamente. A migração 003 cria a fila inbound; migrações posteriores acrescentam relatórios, cobrança, segurança, retry, confiança, CRM e índices necessários ao código atual.
 
 ## 2. Criar o bucket privado no R2
 
@@ -81,6 +81,8 @@ WORKER_ENABLED=false
 TRUST_PROXY=easypanel
 ```
 
+Esse trecho mostra somente o núcleo da integração de e-mail. O servidor atual também exige Redis, Turnstile, scanner de PDF, CSRF, métricas, os nove preços Stripe, configuração do Customer Portal, allowlist OpenRouter, consentimento de processamento de dados e os dois canais Google Chat. Use `.env.example` e a [tabela completa do runbook](operations-runbook.md); não tente iniciar produção somente com o bloco acima.
+
 `DATABASE_URL` não é usada pelo servidor, e `AUDIT_TENANT_ID` é exclusivo do comando manual. No fluxo de e-mail, a conta vem do destinatário cadastrado. Nenhum tenant padrão é aplicado ao catch-all.
 
 Selecione **Deploy**. Se o webhook for criado antes da aplicação estar disponível, suas tentativas podem falhar até o deploy terminar; confira/reenvie pelo painel Resend após a aplicação estar pronta.
@@ -102,20 +104,19 @@ O Resend fornece os destinatários `to`, `cc` e `bcc`; o roteamento usa esses ca
 - A assinatura Svix é verificada sobre o corpo original, com validação de tempo. Payload máximo: 256 KiB. Falha de persistência retorna 503 para o Resend tentar novamente.
 - Evento e trabalhos são criados numa transação. Há unicidade por evento e por cliente/e-mail. Endereços desconhecidos ficam registrados com zero contas correspondentes e não geram extração.
 - Contas inativas ou pausadas recebem trabalhos `blocked`, sem chamadas pagas. Reativar a conta não reprocessa automaticamente mensagens antigas.
-- Até 10 anexos por mensagem, 20 MiB por PDF e 50 MiB de PDFs por e-mail. Não-PDFs são ignorados com aviso; um PDF inválido interrompe o lote. Não há auditoria parcial neste lançamento.
+- Limites do inbound pago: 20 MiB por PDF e 40 MiB de PDFs por e-mail. Não-PDFs são ignorados com aviso; um PDF inválido interrompe o lote. Não há auditoria parcial nesta versão.
 - Os downloads são obtidos pela API autenticada do Resend, limitados ao host `inbound-cdn.resend.com`, sem redirects nem envio de credenciais ao CDN. Se o Resend mudar o host, o trabalho exige revisão em vez de aceitar uma URL arbitrária.
 - PDFs são salvos no bucket privado do Cloudflare R2 antes da extração, sob `invoices/<tenant>/<job>/<attachment>.pdf`. O arquivo temporário usa UUID, nunca o nome recebido como caminho. A extração e o caminho do objeto são armazenados no Supabase por anexo para investigação e retomada controlada.
 - Respostas automáticas (`Auto-Submitted: auto-replied`) são ignoradas. E-mails de faturas gerados por sistemas (`auto-generated`) podem ser processados.
-- `needs_review` indica uma falha permanente ou uma falha temporária que continuou após as retentativas automáticas. Falhas transitórias de OpenRouter e FMCSA são repetidas após 1, 5 e 15 minutos; extrações e anexos já persistidos são reutilizados. Trabalhos `processing` interrompidos por reinício há mais de 20 minutos voltam automaticamente para a fila enquanto ainda houver tentativas.
+- `needs_review` indica uma falha permanente ou uma falha temporária que continuou após as retentativas automáticas. Falhas transitórias de OpenRouter e FMCSA são repetidas após 1, 5 e 15 minutos; extrações e anexos já persistidos são reutilizados. Trabalhos interrompidos voltam automaticamente para a fila conforme o timeout da migração vigente.
 - Uma resposta FMCSA ausente, ambígua ou insuficiente não interrompe o lote: a auditoria termina com a exceção `CARRIER_VERIFICATION_REQUIRED`, exibida como validação da identidade da transportadora e nunca como acusação de autoridade inativa.
 - Para retomar um trabalho, primeiro pare o worker, confira o relatório pelo run_id igual ao ID do trabalho e o cache dos anexos. Só então um administrador pode recolocá-lo em `queued`. Se já existir relatório, o worker recupera-o sem reauditar. Nunca reencaminhe artificialmente como novo trabalho para contornar falhas.
-- Falhas de atualização da fila são registradas nos logs sem corpo do e-mail, anexos ou chaves. Não há endpoint público de administração ou consulta aos relatórios.
-- A retenção/limpeza automática e a notificação operacional de falhas ainda precisam ser implementadas. Monitore `blocked`, `needs_review` e `processing` parados antes de atender clientes.
-- **Esta versão não envia o relatório por e-mail.** Entrega aos contatos verificados e controle Stripe são as próximas integrações.
+- Falhas de atualização da fila são registradas nos logs sem corpo do e-mail, anexos ou chaves. O portal autenticado exibe a operação e a administração global exige papel explícito.
+- Retenção automática, relatórios por e-mail, Stripe, Google Chat e alertas operacionais estão implementados. Continue monitorando `blocked`, `needs_review`, filas antigas e falhas de entrega.
 
-## Validação realizada
+## Validação obrigatória
 
-132 testes automatizados aprovados, incluindo o armazenamento R2, além da compilação TypeScript e do carregamento do servidor compilado. PostgreSQL local validou migração, idempotência da fila, bloqueio de conta pausada e permissões. Docker não está instalado no ambiente de desenvolvimento; a imagem deve ser construída e conferida no EasyPanel. Nenhum acesso à VPS, alteração de DNS, aplicação da migração 003 no Supabase, envio de e-mail ou consumo de créditos foi feito nesta etapa.
+Não trate uma contagem histórica de testes como aprovação da versão atual. Em cada release execute typecheck, suíte, build, migrações isoladas e os smoke tests reais descritos no [runbook operacional](operations-runbook.md). A imagem final também deve ser construída e examinada no mesmo ambiente usado pelo EasyPanel.
 
 ## Fontes
 
