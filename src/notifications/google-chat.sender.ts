@@ -1,5 +1,5 @@
 type Fetcher=typeof fetch;
-type LeadStage='audit_requested'|'audit_received'|'client_signed'|'followup_sent'|'cancel_requested'|'plan_changed';
+type LeadStage='audit_requested'|'audit_received'|'trial_started'|'trial_ended'|'client_signed'|'followup_sent'|'cancel_requested'|'plan_changed';
 
 const retryDelays=[250,1000,2500];
 
@@ -51,8 +51,8 @@ export async function postGoogleChatMessage(url:string,text:string,request:Fetch
 export async function notifyLeadFunnel(input:{stage:LeadStage;requestId?:string|null;email?:string|null;company?:string|null;name?:string|null;follow?:string|number|null;metadata?:Record<string,unknown>},request?:Fetcher):Promise<void>{
  const url=webhook('leads');
  const name=compact(input.name)??compact(input.email)??'Lead';const company=compact(input.company);const email=compact(input.email);const follow=compact(input.follow);const metadata=input.metadata??{};
- const heading:Record<LeadStage,string>={audit_requested:'👋 *Opa, novo lead!*',audit_received:'✅ *Auditoria entregue*',client_signed:'🎉 *Novo cliente!*',followup_sent:`📩 *Follow-up D+${follow??'?'} enviado*`,cancel_requested:'⚠️ *Pedido de cancelamento*',plan_changed:'🔄 *Plano atualizado*'};
- const stage:Record<LeadStage,string>={audit_requested:'Auditoria gratuita solicitada',audit_received:'Auditoria gratuita recebida',client_signed:'Cliente assinou',followup_sent:`${name} acaba de receber o follow-up D+${follow??'?'}.`,cancel_requested:'Cliente solicitou cancelamento',plan_changed:'Cliente alterou o plano'};
+ const heading:Record<LeadStage,string>={audit_requested:'👋 *Opa, novo lead!*',audit_received:'✅ *Auditoria entregue*',trial_started:'🧪 *Período de teste iniciado*',trial_ended:'✅ *Período de teste encerrado*',client_signed:'🎉 *Novo cliente!*',followup_sent:`📩 *Follow-up D+${follow??'?'} enviado*`,cancel_requested:'⚠️ *Pedido de cancelamento*',plan_changed:'🔄 *Plano atualizado*'};
+ const stage:Record<LeadStage,string>={audit_requested:'Auditoria gratuita solicitada',audit_received:'Auditoria gratuita recebida',trial_started:'Teste gratuito de 7 dias iniciado',trial_ended:'Cliente saiu do teste gratuito de 7 dias',client_signed:'Cliente assinou',followup_sent:`${name} acaba de receber o follow-up D+${follow??'?'}.`,cancel_requested:'Cliente solicitou cancelamento',plan_changed:'Cliente alterou o plano'};
  const detailLines=[
   compact(metadata.loads_per_month)?`*Volume informado:* ${compact(metadata.loads_per_month)}`:undefined,
   compact(metadata.invoice_count)?`*Faturas analisadas:* ${compact(metadata.invoice_count)}`:undefined,

@@ -37,6 +37,17 @@ describe('Google Chat notifications',()=>{
   expect(planPayload.text).toContain('*Plano:* Scale');
   expect(planPayload.text).toContain('*Período:* Anual');
  });
+ it('distinguishes a new trial from the end of the free period',async()=>{
+  vi.stubEnv('GOOGLE_CHAT_LEADS_WEBHOOK_URL','https://chat.example/leads');
+  const request=vi.fn(async()=>new Response('{}',{status:200}));
+  await notifyLeadFunnel({stage:'trial_started',requestId:'cs-1',name:'Ana',email:'ana@example.com',company:'Carrier Co',metadata:{plan:'growth',period:'monthly'}},request as typeof fetch);
+  await notifyLeadFunnel({stage:'trial_ended',requestId:'sub-1',name:'Ana',email:'ana@example.com',company:'Carrier Co',metadata:{plan:'growth',period:'monthly'}},request as typeof fetch);
+  const started=JSON.parse(String(request.mock.calls[0][1]?.body)).text;
+  const ended=JSON.parse(String(request.mock.calls[1][1]?.body)).text;
+  expect(started).toContain('Período de teste iniciado');expect(started).toContain('Teste gratuito de 7 dias iniciado');
+  expect(ended).toContain('Período de teste encerrado');expect(ended).toContain('Cliente saiu do teste gratuito de 7 dias');
+  expect(ended).toContain('*Nome:* Ana');expect(ended).toContain('*Empresa:* Carrier Co');
+ });
  it('formats error alerts with id, error and timestamp',async()=>{
   vi.stubEnv('GOOGLE_CHAT_ERRORS_WEBHOOK_URL','https://chat.example/errors');
   const request=vi.fn(async()=>new Response('{}',{status:200}));
