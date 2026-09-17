@@ -1,6 +1,6 @@
 # Índice da documentação
 
-Este diretório é a fonte de referência do Olympian Freight Audit. A documentação descreve o comportamento presente no código e nas migrações até `032_portal_read_performance.sql`.
+Este diretório é a fonte de referência do Olympian Freight Audit. A documentação descreve o comportamento presente no código e nas migrações até `035_rose_rocket_customer_connection.sql`.
 
 ## Visão geral
 
@@ -20,6 +20,7 @@ Este diretório é a fonte de referência do Olympian Freight Audit. A documenta
 | [Auditoria gratuita](free-audit-webhook.md) | Formulário público, confirmação, resultado, follow-ups e checkout. |
 | [Conciliação documental](document-reconciliation.md) | Invoice, rate confirmation, POD e regras de conciliação. |
 | [Processamento de POD](pod-processing.md) | CLI de POD, formatos aceitos, consenso e limites. |
+| [Piloto Rose Rocket](rose-rocket-pilot.md) | Integração Platform v2 desativada, fila de descoberta, segurança e etapas para ativação. |
 
 ## Segurança, observabilidade e conformidade
 

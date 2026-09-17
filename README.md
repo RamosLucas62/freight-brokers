@@ -13,6 +13,7 @@ Plataforma multiempresa para receber documentos de frete, auditar faturas, entre
 - Stripe Checkout, teste de 7 dias, assinatura, cobrança de excedentes, retenção, pausa e cancelamento;
 - portal do cliente com login por magic link, aceite contratual, onboarding, configurações, revisão e histórico;
 - administração global em português e CRM automático do funil comercial;
+- base desativada para piloto Rose Rocket Platform v2 (leitura, fila idempotente e descoberta de eventos; sem cliente conectado, auditoria automática ou escrita no TMS);
 - notificações comerciais e operacionais em canais separados do Google Chat;
 - isolamento por empresa, RLS, rate limiting, Turnstile, scanner privado de PDF, logs estruturados e métricas.
 
@@ -26,6 +27,7 @@ Comece pelo [índice da documentação](docs/README.md).
 - [Confiança verificável](docs/verifiable-confidence.md): evidências, estados, amostragem e calibração.
 - [Portal do cliente e administração](docs/customer-portal.md): autenticação, onboarding, permissões e CRM.
 - [Segurança de produção](docs/security-production.md): controles obrigatórios e gate de lançamento.
+- [Piloto Rose Rocket](docs/rose-rocket-pilot.md): capacidades preparadas, limites da API e etapas para ativar com um cliente autorizado.
 
 ## Requisitos locais
 

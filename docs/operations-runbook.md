@@ -81,6 +81,13 @@ Trocar modelo exige validar suporte a JSON Schema e, com `native`, leitura de PD
 | `FREE_AUDIT_PUBLIC_URL` | Origem pública dos links de confirmação/resultado. |
 | `FREE_AUDIT_OFFER_URL` | Página pública de preços/oferta. |
 | `WORKER_ENABLED` | `true` habilita consumo das filas. |
+| `ROSE_ROCKET_ENABLED` | `false` por padrão; não ativar sem cliente autorizado e migração 034. |
+| `ROSE_ROCKET_CONNECT_ENABLED` | `false` por padrão; habilita somente o cadastro opcional no portal depois da migração 035. Não inicia sincronização. |
+| `ROSE_ROCKET_CREDENTIAL_KEY` | Chave estável de 32 bytes em base64url para cifrar contas de serviço por empresa. Obrigatória quando o cadastro está habilitado; guardar e fazer backup no cofre de segredos. |
+| `ROSE_ROCKET_ORG_ID` / `ROSE_ROCKET_USER_ID` | Identidade da organização e da conta de serviço Platform v2. |
+| `ROSE_ROCKET_CLIENT_ID` / `ROSE_ROCKET_CLIENT_SECRET` | Credenciais OAuth da conta de serviço, somente no cofre de segredos. |
+| `ROSE_ROCKET_WEBHOOK_TOKEN` | Segredo aleatório de 48–128 caracteres para a URL do webhook; não registrar em logs. |
+| `ROSE_ROCKET_API_ORIGIN` | Opcional; origem HTTPS da organização em `*.roserocket.com` quando não for `network.roserocket.com`. |
 
 No Supabase Auth, autorize `PORTAL_URL/auth/callback`, habilite e-mail passwordless e configure SMTP próprio. O template Magic Link deve usar `{{ .ConfirmationURL }}`.
 
@@ -123,6 +130,7 @@ Os Payment Links em `src/billing/plans.ts` estão em modo de teste enquanto come
 | `POST /webhooks/resend` | Recebe evento assinado de e-mail. |
 | `POST /webhooks/stripe` | Recebe evento assinado de cobrança. |
 | `POST /webhooks/free-audit` | Recebe formulário da auditoria gratuita. |
+| `POST /webhooks/rose-rocket/<token>` | Desativado por padrão; recebe evento de pedido e o coloca na fila de descoberta, sem auditar ou escrever no TMS. |
 | `POST /checkout` | Cria checkout público validado por Turnstile. |
 | `GET /free-audit/verify` | Confirma e-mail e enfileira auditoria. |
 | `GET/POST /free-audit/retry` | Substitui arquivos de um pedido que falhou. |
@@ -187,6 +195,12 @@ Faça backup antes de produção. Não edite uma migração já aplicada; crie a
 9. Faça smoke tests de portal e endpoints públicos.
 10. Altere para `WORKER_ENABLED=true` e reinicie.
 11. Observe idade das filas, erros e consumo dos provedores.
+
+### Piloto Rose Rocket, ainda desativado
+
+A migração 034 cria `audit_rose_connections` e `audit_rose_events`, mas não cadastra nem habilita nenhuma organização. A 035 acrescenta cadastro opcional de conta de serviço pelo proprietário/administrador de cobrança no portal, cifrado com `ROSE_ROCKET_CREDENTIAL_KEY`; `ROSE_ROCKET_CONNECT_ENABLED=false` mantém essa tela desabilitada. A verificação da conta deixa a associação `pending` e `enabled=false`. Mesmo com `ROSE_ROCKET_ENABLED=true`, o banco ignora eventos de organizações sem associação habilitada a uma empresa ativa. A fila deduplica por organização e evento; o worker atual ainda usa uma única conta configurada no servidor, só busca metadados do pedido e marca `discovered`, sem baixar/analisar PDFs nem devolver status ao TMS. Consulte [o guia do piloto](rose-rocket-pilot.md) antes de qualquer ativação.
+
+O webhook Platform v2 não documenta assinatura de entrega. O token na URL é um segredo portador: redija-o nos logs do proxy/CDN, restrinja acesso ao endpoint e valide a configuração com o cliente. Para desativar ou reverter a ativação, defina `ROSE_ROCKET_ENABLED=false` e `enabled=false` na associação específica; mantenha os dados da fila para auditoria e não reverta a migração por exclusão de tabelas. A implantação sem cliente deve manter `ROSE_ROCKET_ENABLED=false`.
 
 O container deve executar como usuário sem privilégios, root filesystem somente leitura, `/tmp` em memória, capabilities removidas e sem porta pública para Redis ou scanner. Veja [segurança de produção](security-production.md).
 

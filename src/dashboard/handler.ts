@@ -15,8 +15,10 @@ import {createHash,createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 import {sendSecurityEmail} from '../notifications/security.sender.js';
 import {notifyLeadFunnel} from '../notifications/google-chat.sender.js';
 import {plans,planFromMetadata,periodFromMetadata,selectionFromSubscription} from '../billing/plans.js';
-import {failure,requestId} from '../observability/logger.js';
+import {failure,info,requestId} from '../observability/logger.js';
 import {PORTAL_ACCEPTANCE_TEXT,PRIVACY_VERSION,TERMS_VERSION} from '../legal/consent.js';
+import {RoseRocketClient} from '../tms/rose-rocket.js';
+import {encryptRoseCredentials} from '../tms/rose-rocket.credentials.js';
 
 const uuid=z.string().uuid();
 async function body(req:IncomingMessage) {
@@ -302,22 +304,58 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const tenant=uuid.parse(url.searchParams.get('company'));
  if(!isAdmin&&!membership.data?.some(m=>m.tenant_id===tenant)){send(403,{error:'You do not have access to this company.'});return true;}
  if(!(await take({scope:'authenticated-user-minute',key:user.user.id,limit:120,windowSeconds:60}))||!(await take({scope:'authenticated-tenant-minute',key:tenant,limit:300,windowSeconds:60})))return true;
+ const tenantMembership=membership.data?.find(m=>m.tenant_id===tenant);
+ const canManageRose=!isAdmin&&['owner','billing_admin'].includes(tenantMembership?.role??'');
+ const roseTenant=tenantMembership?.audit_tenants as unknown as {status?:string}|undefined;
+ const roseSetupAvailable=process.env.ROSE_ROCKET_CONNECT_ENABLED==='true';
+ if(url.pathname==='/api/portal/integrations/rose-rocket'&&req.method==='POST'){
+  if(!roseSetupAvailable){send(503,{error:'Rose Rocket connection setup is not available yet.'});return true;}
+  if(!canManageRose){send(403,{error:'Only the company owner or billing administrator can connect Rose Rocket.'});return true;}
+  if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Verify your authenticator before connecting Rose Rocket.'});return true;}
+  if(roseTenant?.status!=='active'){send(409,{error:'This company must be active to connect Rose Rocket.'});return true;}
+  if(!(await take({scope:'rose-connect-user',key:user.user.id,limit:3,windowSeconds:3600,failClosed:true})))return true;
+  const input=z.object({org_id:uuid,user_id:uuid,client_id:z.string().trim().min(1).max(512),client_secret:z.string().min(1).max(2048)}).parse(await body(req));
+  const account={orgId:input.org_id,userId:input.user_id,clientId:input.client_id,clientSecret:input.client_secret};
+  try{await new RoseRocketClient({account}).verifyAccess();}
+  catch{send(422,{error:'Rose Rocket could not verify this integration account. Check the four values and its API access.'});return true;}
+  const previous=await serviceDb.from('audit_rose_connections').select('org_id').eq('tenant_id',tenant).maybeSingle();
+  if(previous.error)throw previous.error;
+  if(previous.data&&previous.data.org_id!==input.org_id){send(409,{error:'This company is already linked to another Rose Rocket organization. Contact support to change it.'});return true;}
+  const changes={credentials_ciphertext:encryptRoseCredentials(account),connected_at:new Date().toISOString(),connected_by:user.user.id,connection_state:'pending',enabled:false};
+  const saved=previous.data
+   ?await serviceDb.from('audit_rose_connections').update(changes).eq('tenant_id',tenant).eq('org_id',input.org_id)
+   :await serviceDb.from('audit_rose_connections').insert({org_id:input.org_id,tenant_id:tenant,...changes});
+  if(saved.error){send(saved.error.code==='23505'?409:503,{error:saved.error.code==='23505'?'This Rose Rocket organization is already linked to another company.':'Could not save the connection. Try again.'});return true;}
+  info('rose.connection.verified',{tenant_id:tenant,org_id:input.org_id,actor_user_id:user.user.id});
+  send(200,{status:'pending',org_id:input.org_id});return true;
+ }
+ if(url.pathname==='/api/portal/integrations/rose-rocket/disconnect'&&req.method==='POST'){
+  if(!canManageRose){send(403,{error:'Only the company owner or billing administrator can disconnect Rose Rocket.'});return true;}
+  if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Verify your authenticator before disconnecting Rose Rocket.'});return true;}
+  if(!(await take({scope:'rose-disconnect-user',key:user.user.id,limit:5,windowSeconds:3600,failClosed:true})))return true;
+  const stopped=await serviceDb.from('audit_rose_connections').update({credentials_ciphertext:null,connected_at:null,connected_by:null,connection_state:'disconnected',enabled:false}).eq('tenant_id',tenant);
+  if(stopped.error)throw stopped.error;
+  info('rose.connection.disconnected',{tenant_id:tenant,actor_user_id:user.user.id});
+  send(200,{status:'disconnected'});return true;
+ }
  if(url.pathname==='/api/portal/settings'&&req.method==='GET'){
   const monthStart=new Date();monthStart.setUTCDate(1);monthStart.setUTCHours(0,0,0,0);
-  const [settings,contacts,billing,senders,usage]=await Promise.all([
+  const [settings,contacts,billing,senders,usage,roseConnection]=await Promise.all([
    db.from('audit_notification_settings').select('timezone,daily_hour,daily_enabled,monthly_enabled,immediate_enabled,immediate_threshold').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_report_contacts').select('email,verified_at').eq('tenant_id',tenant).eq('enabled',true).order('email'),
    db.from('audit_billing_customers').select('billing_email,stripe_subscription_id,status,trial_ends_at,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_inbound_sender_rules').select('sender_email').eq('tenant_id',tenant).eq('enabled',true).order('sender_email'),
    db.from('audit_invoice_usage').select('id',{count:'exact',head:true}).eq('tenant_id',tenant).gte('created_at',monthStart.toISOString()),
+   roseSetupAvailable?serviceDb.from('audit_rose_connections').select('org_id,enabled,connection_state,connected_at').eq('tenant_id',tenant).maybeSingle():Promise.resolve({data:null,error:null}),
   ]);
-  if(settings.error||contacts.error||billing.error||senders.error||usage.error)throw new Error('Settings lookup failed');
+  if(settings.error||contacts.error||billing.error||senders.error||usage.error||roseConnection.error)throw new Error('Settings lookup failed');
   // Billing state is synchronized by Stripe webhooks. Reading Settings must stay
   // a local portal query and should not wait on a live Stripe API call.
   const bill=billing.data;
   const tenantRole=membership.data?.find(m=>m.tenant_id===tenant)?.role;
   const tenantDetails=membership.data?.find(m=>m.tenant_id===tenant)?.audit_tenants as {alias?:string}|undefined;const plan=plans[planFromMetadata(bill?.plan_code)];
   send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),audit_email:tenantDetails?.alias?`${tenantDetails.alias}@audit.aiolympian.com`:null,max_recipients:plan.maxRecipients,max_senders:plan.maxSenders,report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
+   integrations:{rose_rocket:{setup_available:roseSetupAvailable,can_manage:canManageRose,status:roseConnection.data?.enabled?'active':roseConnection.data?.connection_state==='pending'&&roseConnection.data?.connected_at?'pending':'disconnected',org_id:roseConnection.data?.org_id??null,connected_at:roseConnection.data?.connected_at??null}},
    billing:bill?{status:bill.status,trial_ends_at:bill.trial_ends_at,paused_until:bill.paused_until,payment_grace_until:bill.payment_grace_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
     plan_code:bill.plan_code,billing_period:bill.billing_period,included_invoices:bill.included_invoices,overage_unit_amount_cents:bill.overage_unit_amount_cents,usage_count:usage.count??0,
     deletion_scheduled_at:bill.deletion_scheduled_at,can_manage:!isAdmin&&bill.billing_email===user.user.email?.toLowerCase(),
