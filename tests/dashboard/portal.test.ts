@@ -1,5 +1,7 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {createApp} from '../../src/http/app.js';
+import {RoseRocketClient} from '../../src/tms/rose-rocket.js';
+const rose=vi.hoisted(()=>({role:'owner',row:null as null|{org_id:string},lastWrite:null as any}));
 const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,guideCompletedAt:null as string|null,legalAcceptedAt:'2026-09-12T18:00:00.000Z' as string|null,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),refreshSession:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),retrieveSubscription:vi.fn(),sendSecurityEmail:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),gte:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
 vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,refreshSession:mocks.refreshSession,signInWithOtp:mocks.otp}})}));
 vi.mock('../../src/config/supabase.js',()=>({timedFetch:globalThis.fetch,getSupabaseClient:()=>({from:mocks.from,rpc:mocks.rpc,auth:{admin:{createUser:mocks.createUser,generateLink:mocks.generateLink}}})}));
@@ -8,6 +10,7 @@ vi.mock('../../src/notifications/security.sender.js',()=>({sendSecurityEmail:moc
 const tenant='11111111-1111-4111-8111-111111111111';const other='22222222-2222-4222-8222-222222222222';
 let server:ReturnType<typeof createApp>,base:string;
 beforeEach(async()=>{
+ rose.role='owner';rose.row=null;rose.lastWrite=null;
  vi.resetAllMocks();mocks.isAdmin=false;mocks.enabled=true;mocks.guideCompletedAt=null;mocks.legalAcceptedAt='2026-09-12T18:00:00.000Z';vi.stubEnv('PORTAL_URL','https://portal.example.com');vi.stubEnv('SUPABASE_ANON_KEY','public-key');vi.stubEnv('SUPABASE_URL','https://example.supabase.co');
  mocks.getUser.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'}},error:null});
  mocks.refreshSession.mockResolvedValue({data:{user:null,session:null},error:{message:'invalid refresh token'}});
@@ -18,7 +21,11 @@ beforeEach(async()=>{
  mocks.from.mockImplementation(table=>{
   if(['audit_admins','audit_portal_users'].includes(table))return{select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:table==='audit_admins'?(mocks.isAdmin?{user_id:'user-1'}:null):{enabled:mocks.enabled,guide_completed_at:mocks.guideCompletedAt},error:null})})})};
   if(table==='audit_portal_legal_acceptances'){const chain:any={eq:()=>chain,maybeSingle:()=>Promise.resolve({data:mocks.legalAcceptedAt?{accepted_at:mocks.legalAcceptedAt}:null,error:null})};return{select:()=>chain};}
-  if(table==='audit_memberships')return{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,role:'owner',audit_tenants:{id:tenant,name:'Company',alias:'company'}}],error:null})})};
+  if(table==='audit_memberships')return{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,role:rose.role,audit_tenants:{id:tenant,name:'Company',alias:'company',status:'active'}}],error:null})})};
+  if(table==='audit_rose_connections'){
+   const chain:any={select:()=>chain,eq:()=>chain,maybeSingle:()=>Promise.resolve({data:rose.row,error:null}),insert:async(data:any)=>{rose.lastWrite=data;return {error:null};},update:(data:any)=>{rose.lastWrite=data;return chain;},then:(resolve:any)=>resolve({error:null})};
+   return chain;
+  }
   return mocks.query;
  });
  mocks.query.select.mockReturnValue(mocks.query);mocks.query.eq.mockReturnValue(mocks.query);mocks.query.gte.mockResolvedValue({data:[],count:0,error:null});mocks.query.order.mockReturnValue(mocks.query);mocks.query.range.mockResolvedValue({data:[],count:0,error:null});
@@ -26,7 +33,7 @@ beforeEach(async()=>{
  server=createApp({secret:'whsec_'+Buffer.from('test-secret-32-bytes-long-12345678').toString('base64'),enqueue:async()=>{},ready:async()=>true});
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
-afterEach(async()=>{vi.unstubAllEnvs();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
+afterEach(async()=>{vi.unstubAllEnvs();vi.restoreAllMocks();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
 const headers={'Content-Type':'application/json',Origin:'https://portal.example.com',Cookie:'audit_session=valid-token'};
 it('serves login, mandatory legal acceptance and a re-openable product guide with restrictive CSP',async()=>{const r=await fetch(base+'/');expect(r.status).toBe(200);expect(r.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");const html=await r.text();expect(html).toContain('type="email"');expect(html).toContain('id="legal-acceptance"');expect(html).toContain('id="accept-terms"');expect(html).toContain('id="accept-privacy"');expect(html).toContain('id="product-guide"');expect(html).toContain('id="open-guide"');});
 it('hides customer workspace links while an administrator is managing accounts',async()=>{const page=await fetch(base+'/');const html=await page.text();expect(html).toContain('id="workspace-label"');expect(html).toContain('id="workspace-nav"');const admin=await fetch(base+'/admin.js');const script=await admin.text();expect(script).toContain('setWorkspaceNavigation(false)');expect(script).toContain('setWorkspaceNavigation(true)');});
@@ -53,6 +60,33 @@ it('does not allow the legal endpoint to record unchecked consent',async()=>{moc
 it('records guide completion for the authenticated customer',async()=>{mocks.rpc.mockResolvedValue({data:'2026-09-10T12:00:00.000Z',error:null});const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(200);expect(await r.json()).toMatchObject({ok:true});expect(mocks.rpc).toHaveBeenCalledWith('portal_complete_guide');});
 it('does not expose the customer guide action in administrator mode',async()=>{mocks.isAdmin=true;const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_complete_guide');});
 it('rejects cross-company reads',async()=>{const r=await fetch(base+'/api/portal/invoices?company='+other,{headers});expect(r.status).toBe(403);expect(mocks.from).not.toHaveBeenCalledWith('invoices');});
+it('keeps Rose Rocket setup closed unless explicitly enabled',async()=>{
+ const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:'{}'});
+ expect(r.status).toBe(503);expect(mocks.from).not.toHaveBeenCalledWith('audit_rose_connections');
+});
+it('accepts only an owner or billing administrator for Rose Rocket setup',async()=>{
+ vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');rose.role='viewer';
+ const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:'{}'});
+ expect(r.status).toBe(403);expect(mocks.from).not.toHaveBeenCalledWith('audit_rose_connections');
+});
+it('verifies a Rose Rocket service account but stores it encrypted and disabled',async()=>{
+ vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));
+ const verified=vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockResolvedValue();
+ const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({org_id:other,user_id:'33333333-3333-4333-8333-333333333333',client_id:'client-1',client_secret:'private-secret'})});
+ expect(r.status).toBe(200);expect(await r.json()).toMatchObject({status:'pending',org_id:other});
+ expect(verified).toHaveBeenCalledOnce();expect(rose.lastWrite).toMatchObject({org_id:other,tenant_id:tenant,connection_state:'pending',enabled:false});
+ expect(rose.lastWrite.credentials_ciphertext).not.toContain('private-secret');
+});
+it('does not store Rose Rocket credentials when the provider rejects them',async()=>{
+ vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');
+ vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockRejectedValue(new Error('ROSE_ACCESS_HTTP_403'));
+ const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({org_id:other,user_id:'33333333-3333-4333-8333-333333333333',client_id:'client-1',client_secret:'invalid-secret'})});
+ expect(r.status).toBe(422);expect(rose.lastWrite).toBeNull();
+});
+it('disconnects Rose Rocket without exposing or deleting audit records',async()=>{
+ const r=await fetch(base+`/api/portal/integrations/rose-rocket/disconnect?company=${tenant}`,{method:'POST',headers,body:'{}'});
+ expect(r.status).toBe(200);expect(rose.lastWrite).toMatchObject({credentials_ciphertext:null,connected_at:null,enabled:false,connection_state:'disconnected'});
+});
 it('scopes and paginates every supported collection',async()=>{for(const collection of ['jobs','invoices','reports','exceptions','history']){const r=await fetch(base+`/api/portal/${collection}?company=${tenant}&page=2`,{headers});expect(r.status).toBe(200);expect(mocks.query.eq).toHaveBeenLastCalledWith('tenant_id',tenant);expect(mocks.query.range).toHaveBeenLastCalledWith(100,149);}});
 it('normalizes an empty database result so the portal refresh remains renderable',async()=>{mocks.query.range.mockResolvedValueOnce({data:null,count:null,error:null});const r=await fetch(base+`/api/portal/jobs?company=${tenant}`,{headers});expect(r.status).toBe(200);expect(await r.json()).toEqual({rows:[],total:0,page:0});});
 it('rejects cross-origin mutation',async()=>{const r=await fetch(base+'/api/portal/login',{method:'POST',headers:{...headers,Origin:'https://evil.example.com'},body:JSON.stringify({email:'client@example.com'})});expect(r.status).toBe(403);expect(mocks.otp).not.toHaveBeenCalled();});
@@ -68,26 +102,26 @@ it('resumes paid onboarding and emails one secure platform access button',async(
  expect(mocks.rpc).toHaveBeenCalledWith('sync_onboarding_billing_state',{p_session_id:'cs_test_paid',p_subscription_id:'sub_1',p_status:'active',p_trial_ends_at:null});
 });
 it('accepts a completed card-backed free trial and records its end date',async()=>{
- const trialEnd=Date.parse('2026-09-16T12:00:00Z')/1000;
+ const trialEnd=Math.floor(Date.now()/1000)+86400;
  mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_trial',payment_status:'no_payment_required',status:'complete',customer:'cus_trial',subscription:'sub_trial',customer_details:{email:'owner@example.com'},metadata:{plan_code:'growth',billing_period:'monthly'}});
  mocks.retrieveSubscription.mockResolvedValue({id:'sub_trial',status:'trialing',customer:'cus_trial',trial_end:trialEnd});
  mocks.rpc.mockImplementation(async(name)=>name==='portal_onboarding_user_id'?{data:other,error:null}:name==='portal_complete_onboarding'?{data:{tenant_id:tenant,alias:'acme',audit_email:'acme@audit.aiolympian.com'},error:null}:name==='portal_save_notification_settings_v2'?{data:{pending_verification:[]},error:null}:{data:null,error:null});
  const response=await fetch(base+'/api/portal/onboarding',{method:'POST',headers,body:JSON.stringify({session_id:'cs_test_trial',company_name:'Acme Logistics',email:'owner@example.com',timezone:'America/Los_Angeles',report_emails:['owner@example.com']})});
  expect(response.status).toBe(200);
- expect(mocks.rpc).toHaveBeenCalledWith('sync_onboarding_billing_state',{p_session_id:'cs_test_trial',p_subscription_id:'sub_trial',p_status:'trialing',p_trial_ends_at:'2026-09-16T12:00:00.000Z'});
+ expect(mocks.rpc).toHaveBeenCalledWith('sync_onboarding_billing_state',{p_session_id:'cs_test_trial',p_subscription_id:'sub_trial',p_status:'trialing',p_trial_ends_at:new Date(trialEnd*1000).toISOString()});
  expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({html:expect.stringContaining('free trial')}));
 });
 it('accepts a Stripe trial even when Checkout reports the saved card as paid',async()=>{
- const trialEnd=Date.parse('2026-09-16T12:00:00Z')/1000;
+ const trialEnd=Math.floor(Date.now()/1000)+86400;
  mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_paid_trial',payment_status:'paid',status:'complete',customer:'cus_trial',subscription:'sub_trial',customer_details:{email:'owner@example.com'},metadata:{plan_code:'scale',billing_period:'semiannual'}});
  mocks.retrieveSubscription.mockResolvedValue({id:'sub_trial',status:'trialing',customer:'cus_trial',trial_end:trialEnd});
  mocks.rpc.mockImplementation(async(name)=>name==='portal_onboarding_user_id'?{data:other,error:null}:name==='portal_complete_onboarding'?{data:{tenant_id:tenant,alias:'acme',audit_email:'acme@audit.aiolympian.com'},error:null}:name==='portal_save_notification_settings_v2'?{data:{pending_verification:[]},error:null}:{data:null,error:null});
  const response=await fetch(base+'/api/portal/onboarding',{method:'POST',headers,body:JSON.stringify({session_id:'cs_test_paid_trial',company_name:'Acme Logistics',email:'owner@example.com',timezone:'America/Sao_Paulo',report_emails:['owner@example.com']})});
  expect(response.status).toBe(200);
- expect(mocks.rpc).toHaveBeenCalledWith('sync_onboarding_billing_state',{p_session_id:'cs_test_paid_trial',p_subscription_id:'sub_trial',p_status:'trialing',p_trial_ends_at:'2026-09-16T12:00:00.000Z'});
+ expect(mocks.rpc).toHaveBeenCalledWith('sync_onboarding_billing_state',{p_session_id:'cs_test_paid_trial',p_subscription_id:'sub_trial',p_status:'trialing',p_trial_ends_at:new Date(trialEnd*1000).toISOString()});
 });
 it('assigns the plan from the live Stripe subscription price instead of stale Checkout metadata',async()=>{
- vi.stubEnv('STRIPE_PRICE_SCALE_SEMIANNUAL','price_scale_six_months');const trialEnd=Date.parse('2026-09-16T12:00:00Z')/1000;
+ vi.stubEnv('STRIPE_PRICE_SCALE_SEMIANNUAL','price_scale_six_months');const trialEnd=Math.floor(Date.now()/1000)+86400;
  mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_scale',payment_status:'paid',status:'complete',customer:'cus_trial',subscription:'sub_trial',customer_details:{email:'owner@example.com'},metadata:{plan_code:'core',billing_period:'monthly'}});
  mocks.retrieveSubscription.mockResolvedValue({id:'sub_trial',status:'trialing',customer:'cus_trial',trial_end:trialEnd,items:{data:[{price:{id:'price_scale_six_months'}}]}});
  mocks.rpc.mockImplementation(async(name)=>name==='portal_onboarding_user_id'?{data:other,error:null}:name==='portal_complete_onboarding'?{data:{tenant_id:tenant,alias:'acme',audit_email:'acme@audit.aiolympian.com'},error:null}:name==='portal_save_notification_settings_v2'?{data:{pending_verification:[]},error:null}:{data:null,error:null});
@@ -95,7 +129,7 @@ it('assigns the plan from the live Stripe subscription price instead of stale Ch
  expect(response.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('assign_billing_plan',{p_tenant:tenant,p_plan:'scale',p_period:'semiannual',p_session_id:'cs_test_scale'});
 });
 it('loads the verified plan limit and checkout email for the onboarding form',async()=>{
- const trialEnd=Date.parse('2026-09-16T12:00:00Z')/1000;
+ const trialEnd=Math.floor(Date.now()/1000)+86400;
  mocks.retrieveCheckout.mockResolvedValue({id:'cs_test_context',payment_status:'paid',status:'complete',customer:'cus_trial',subscription:'sub_trial',customer_details:{email:'owner@example.com'},metadata:{plan_code:'core',billing_period:'monthly'}});
  mocks.retrieveSubscription.mockResolvedValue({id:'sub_trial',status:'trialing',customer:'cus_trial',trial_end:trialEnd});
  const response=await fetch(base+'/api/portal/onboarding/context?session_id=cs_test_context');

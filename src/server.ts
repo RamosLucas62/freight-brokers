@@ -12,6 +12,9 @@ import {createRateLimiter} from './security/rate-limit.js';
 import {createFreeAuditHttpHandler} from './free-audit/http.js';
 import {startFreeAuditWorker} from './free-audit/worker.js';
 import {failure,info} from './observability/logger.js';
+import {RoseRocketClient} from './tms/rose-rocket.js';
+import {enqueueRoseEvent} from './tms/rose-rocket.repository.js';
+import {startRoseDiscoveryWorker} from './tms/rose-rocket.worker.js';
 const Config=z.object({
  PORT:z.coerce.number().int().min(1).max(65535).default(3000),
  RESEND_WEBHOOK_SECRET:z.string().startsWith('whsec_').min(15),
@@ -38,19 +41,45 @@ const Config=z.object({
  OPENROUTER_ALLOWED_MODELS:z.string().min(1),OPENROUTER_DATA_PROCESSING_ACK:z.literal('true'),
  FREE_AUDIT_ORIGIN:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_ORIGINS:z.string().optional(),FREE_AUDIT_PUBLIC_URL:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_OFFER_URL:z.string().url(),
  GOOGLE_CHAT_LEADS_WEBHOOK_URL:z.string().url(),GOOGLE_CHAT_ERRORS_WEBHOOK_URL:z.string().url(),
+ ROSE_ROCKET_ENABLED:z.enum(['true','false']).default('false'),
+ ROSE_ROCKET_CONNECT_ENABLED:z.enum(['true','false']).default('false'),
 });
 const parsed=Config.safeParse(process.env);
 if(!parsed.success){failure('server.configuration.invalid',new Error('INVALID_SERVER_CONFIGURATION'),{invalid_variables:parsed.error.issues.map(i=>i.path.join('.'))});process.exit(1);}
 const config=parsed.data;
+if(config.ROSE_ROCKET_CONNECT_ENABLED==='true'){
+ const encoded=process.env.ROSE_ROCKET_CREDENTIAL_KEY??'';
+ if(!/^[A-Za-z0-9_-]{43}=?$/.test(encoded)||Buffer.from(encoded,'base64url').length!==32){
+  failure('server.configuration.invalid',new Error('INVALID_ROSE_CREDENTIAL_KEY'),{invalid_variables:['ROSE_ROCKET_CREDENTIAL_KEY']});process.exit(1);
+ }
+}
+let roseClient:RoseRocketClient|undefined;
+let roseWebhookToken:string|undefined;
+if(config.ROSE_ROCKET_ENABLED==='true'){
+ const rose=z.object({
+  ROSE_ROCKET_ORG_ID:z.string().uuid(),ROSE_ROCKET_USER_ID:z.string().uuid(),
+  ROSE_ROCKET_CLIENT_ID:z.string().min(1),ROSE_ROCKET_CLIENT_SECRET:z.string().min(1),
+  ROSE_ROCKET_WEBHOOK_TOKEN:z.string().regex(/^[A-Za-z0-9_-]{48,128}$/),
+  ROSE_ROCKET_API_ORIGIN:z.preprocess(value=>value===''?undefined:value,z.string().url().optional()),
+ }).safeParse(process.env);
+ if(!rose.success){failure('server.configuration.invalid',new Error('INVALID_ROSE_CONFIGURATION'),{invalid_variables:rose.error.issues.map(i=>i.path.join('.'))});process.exit(1);}
+ roseClient=new RoseRocketClient({account:{clientId:rose.data.ROSE_ROCKET_CLIENT_ID,clientSecret:rose.data.ROSE_ROCKET_CLIENT_SECRET,
+  orgId:rose.data.ROSE_ROCKET_ORG_ID,userId:rose.data.ROSE_ROCKET_USER_ID},
+  ...(rose.data.ROSE_ROCKET_API_ORIGIN?{apiOrigin:rose.data.ROSE_ROCKET_API_ORIGIN}:{})});
+ roseWebhookToken=rose.data.ROSE_ROCKET_WEBHOOK_TOKEN;
+}
 if(new URL(config.PORTAL_URL).protocol!=='https:'){failure('server.configuration.invalid',new Error('PORTAL_URL_HTTPS_REQUIRED'),{invalid_variables:['PORTAL_URL']});process.exit(1);}
 const limiter=createRateLimiter(config.REDIS_URL);
 let allowedOrigins:string[];
 try{allowedOrigins=[...new Set((config.FREE_AUDIT_ORIGINS??config.FREE_AUDIT_ORIGIN).split(',').map(value=>new URL(value.trim()).origin))];}
 catch{failure('server.configuration.invalid',new Error('FREE_AUDIT_ORIGINS_INVALID'),{invalid_variables:['FREE_AUDIT_ORIGINS']});process.exit(1);}
 const freeAudit=createFreeAuditHttpHandler({allowedOrigins,publicUrl:config.FREE_AUDIT_PUBLIC_URL,offerUrl:config.FREE_AUDIT_OFFER_URL});
-const server=createApp({secret:config.RESEND_WEBHOOK_SECRET,enqueue,limiter,freeAudit,ready:async()=>{
+const server=createApp({secret:config.RESEND_WEBHOOK_SECRET,enqueue,limiter,freeAudit,
+ ...(roseWebhookToken&&roseClient?{roseWebhook:{token:roseWebhookToken,orgId:roseClient.orgId,enqueue:enqueueRoseEvent}}:{}),ready:async()=>{
  const {error}=await getSupabaseClient().from('audit_inbound_jobs').select('id',{head:true}).limit(1);
- return !error;
+ if(error)return false;
+ if(roseClient){const check=await getSupabaseClient().from('audit_rose_events').select('id',{head:true}).limit(1);return !check.error;}
+ return true;
 }});
 const stopWorker=config.WORKER_ENABLED==='true'?startWorker(new ResendReceivingClient(config.RESEND_API_KEY)):async()=>{};
 const stopNotifications=config.WORKER_ENABLED==='true'
@@ -60,13 +89,14 @@ const stopFreeAudits=config.WORKER_ENABLED==='true'
  ?startFreeAuditWorker(new ResendSender(config.RESEND_API_KEY,config.RESEND_FROM_EMAIL),config.FREE_AUDIT_OFFER_URL,config.FREE_AUDIT_PUBLIC_URL,config.CSRF_SECRET)
  :async()=>{};
 const stopBilling=config.WORKER_ENABLED==='true'?startBillingMaintenanceWorker():async()=>{};
+const stopRose=config.WORKER_ENABLED==='true'&&roseClient?startRoseDiscoveryWorker(roseClient):async()=>{};
 server.listen(config.PORT,'0.0.0.0',()=>info('server.started',{port:config.PORT,workers_enabled:config.WORKER_ENABLED==='true',node_env:process.env.NODE_ENV??'unknown'}));
 let closing=false;
 async function shutdown(){
  if(closing)return;closing=true;info('server.shutdown.started');
  server.close();
  const deadline=setTimeout(()=>process.exit(1),25000);deadline.unref();
- await Promise.all([stopWorker(),stopNotifications(),stopFreeAudits(),stopBilling(),limiter.close()]);clearTimeout(deadline);info('server.shutdown.completed');process.exit(0);
+ await Promise.all([stopWorker(),stopNotifications(),stopFreeAudits(),stopBilling(),stopRose(),limiter.close()]);clearTimeout(deadline);info('server.shutdown.completed');process.exit(0);
 }
 process.on('SIGTERM',()=>void shutdown());process.on('SIGINT',()=>void shutdown());
 process.on('unhandledRejection',error=>failure('process.unhandled_rejection',error));
