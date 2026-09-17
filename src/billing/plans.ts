@@ -15,19 +15,19 @@ export const prices={
 
 export const paymentLinks={
  core:{
-  monthly:'https://buy.stripe.com/test_6oU14fdCW45p8RBbFbcQU02',
-  semiannual:'https://buy.stripe.com/test_5kQaEPbuO59t6JtbFbcQU03',
-  annual:'https://buy.stripe.com/test_cNicMX2Yi8lFffZbFbcQU04',
+  monthly:'https://buy.stripe.com/6oUaEPbuO1Xh3xh38FcQU00',
+  semiannual:'https://buy.stripe.com/6oU3cnfL46dxc3N38FcQU01',
+  annual:'https://buy.stripe.com/6oU14fdCW45p8RBbFbcQU02',
  },
  growth:{
-  monthly:'https://buy.stripe.com/test_7sYfZ99mGdFZ6JtdNjcQU05',
-  semiannual:'https://buy.stripe.com/test_bJe7sDfL459t1p95gNcQU06',
-  annual:'https://buy.stripe.com/test_4gMfZ956qfO73xheRncQU07',
+  monthly:'https://buy.stripe.com/5kQaEPbuO59t6JtbFbcQU03',
+  semiannual:'https://buy.stripe.com/cNicMX2Yi8lFffZbFbcQU04',
+  annual:'https://buy.stripe.com/7sYfZ99mGdFZ6JtdNjcQU05',
  },
  scale:{
-  monthly:'https://buy.stripe.com/test_6oUaEPbuO1Xh3xh38FcQU00',
-  semiannual:'https://buy.stripe.com/test_fZu3cn6au1Xhd7R10xcQU08',
-  annual:'https://buy.stripe.com/test_bJe3cn9mG0Tdgk34cJcQU09',
+  monthly:'https://buy.stripe.com/bJe7sDfL459t1p95gNcQU06',
+  semiannual:'https://buy.stripe.com/4gMfZ956qfO73xheRncQU07',
+  annual:'https://buy.stripe.com/fZu3cn6au1Xhd7R10xcQU08',
  },
 } as const satisfies Record<PlanCode,Record<BillingPeriod,string>>;
 

@@ -112,7 +112,7 @@ O servidor de produção recusa inicialização quando uma dessas dependências 
 | `STRIPE_RETENTION_COUPON_ID` | Cupom de 15%, duração `once`. |
 | `STRIPE_PORTAL_CONFIGURATION_ID` | Configuração dedicada do Customer Portal. |
 
-Os Payment Links em `src/billing/plans.ts` estão em modo de teste enquanto começarem com `https://buy.stripe.com/test_`. Substitua todos antes do primeiro cliente real. Price IDs, chaves e webhooks também precisam estar no mesmo modo.
+Os nove Payment Links em `src/billing/plans.ts` apontam para produção. Antes de publicar o código e aceitar o primeiro cliente real, confira na Stripe (modo produção) que cada link corresponde ao plano, período, preço, moeda, recorrência, teste grátis e URL de retorno esperados. Configure os nove Price IDs, a chave secreta, o webhook, o cupom de retenção e o Customer Portal no mesmo modo de produção; recursos de teste não funcionam com IDs de produção.
 
 ## 3. Endpoints
 
