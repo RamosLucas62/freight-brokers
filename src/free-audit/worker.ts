@@ -22,11 +22,16 @@ function minimumDate(now=new Date()){const date=new Date(now);date.setUTCDate(da
 function failureKind(error:unknown):FreeAuditFailureKind{
  const code=error instanceof Error?error.message.toUpperCase():'';
  if(/(TOO_LARGE|PAGE_LIMIT)/.test(code))return 'too_large';
- if(/(INVALID_OR_ENCRYPTED|INVALID_PDF|FORMAT|NO_FREE_AUDIT_ATTACHMENTS)/.test(code))return 'invalid_document';
+ if(/(INVALID_OR_ENCRYPTED|INVALID_PDF|FORMAT|NO_FREE_AUDIT_ATTACHMENTS|NO_ELIGIBLE_INVOICES|INVALID_FREE_AUDIT_REPORT)/.test(code))return 'invalid_document';
  if(/(MALWARE|ACTIVE_CONTENT)/.test(code))return 'unsafe_document';
  return 'temporary_error';
 }
 export function resultAccessToken(requestId:string,secret:string){return createHmac('sha256',secret).update(`free-audit-result:${requestId}`).digest('base64url');}
+export function assertFreeAuditReport(report:import('../types/report.types.js').AuditReport):void{
+ if(!Number.isSafeInteger(report.total_invoices_processed)||report.total_invoices_processed<1)throw new Error('NO_ELIGIBLE_INVOICES');
+ if(!Number.isSafeInteger(report.total_exceptions)||report.total_exceptions<0||report.total_exceptions!==report.exceptions.length)throw new Error('INVALID_FREE_AUDIT_REPORT');
+ if(!Number.isFinite(report.valor_total_under_review)||report.valor_total_under_review<0)throw new Error('INVALID_FREE_AUDIT_REPORT');
+}
 
 export async function processFreeAudit(sender:ResendSender,signupUrl:string,publicUrl=signupUrl,linkSecret=process.env.CSRF_SECRET??(process.env.NODE_ENV==='test'?'test-free-audit-link-secret-32bytes':'')):Promise<boolean>{
  const request=await repository.claimRequest();if(!request)return false;
@@ -42,6 +47,7 @@ export async function processFreeAudit(sender:ResendSender,signupUrl:string,publ
    for(const attachment of attachments){stage='download_r2';const bytes=await getPrivateObject(attachment.storage_path);stage='scan_pdf';await scanPdf(bytes);stage='prepare_pdf';const path=join(dir,`${attachment.attachment_id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);labels[path]=attachment.filename;}
    stage='audit_pipeline';
    report=await runAuditPipeline({tenantId:request.id,filePaths:paths,sourceLabels:labels,ctx:{run_id:request.id,carrierCache:new Map(),cacheTtlHours:Number(process.env.CARRIER_CACHE_TTL_HOURS??4)},extractor,getCarrier,store:transientStore,minimumInvoiceDate:minimumDate(),maximumInvoiceDate:new Date().toISOString().slice(0,10)});
+   assertFreeAuditReport(report);
    report.tenant_id=undefined;
    report.warnings=[...(report.warnings??[]),'Only invoices dated within the 30 days before processing are included. Documents without a readable invoice or load date remain included for manual review.'];
    stage='save_result';await repository.saveResult(request.id,report);

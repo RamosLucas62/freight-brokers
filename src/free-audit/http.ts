@@ -257,14 +257,17 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     }
     if(registered.action==='in_progress'){respond(res,202,{accepted:true,message:'Your request is already being received.'});return true;}
     if(registered.action==='created'||registered.action==='replace'){
-     const uploaded:string[]=[];let oldObjectsDeleted=registered.action!=='replace';
+     const uploaded:string[]=[];let attachmentsReplaced=false;let previous:import('./types.js').FreeAuditAttachment[]=[];
      try{
-      if(registered.action==='replace'){const previous=await repository.loadAttachments(registered.request_id);await deleteInvoiceObjects(previous.map(file=>file.storage_path));oldObjectsDeleted=true;await repository.clearAttachments(registered.request_id);}
       const pdfs=await pdfsFromFiles(files);
-      for(const pdf of pdfs){const attachmentId=randomUUID();const path=freeAuditObjectKey(registered.request_id,attachmentId);await putInvoiceObject(path,pdf.bytes);uploaded.push(path);await repository.saveAttachment({request_id:registered.request_id,attachment_id:attachmentId,filename:pdf.name,storage_path:path,document_hash:pdf.hash,size_bytes:pdf.bytes.length});}
+      previous=await repository.loadAttachments(registered.request_id);
+      const replacements:import('./types.js').FreeAuditAttachment[]=[];
+      for(const pdf of pdfs){const attachmentId=randomUUID();const path=freeAuditObjectKey(registered.request_id,attachmentId);await putInvoiceObject(path,pdf.bytes);uploaded.push(path);replacements.push({request_id:registered.request_id,attachment_id:attachmentId,filename:pdf.name,storage_path:path,document_hash:pdf.hash,size_bytes:pdf.bytes.length});}
+      await repository.replaceAttachments(registered.request_id,replacements);attachmentsReplaced=true;
       await repository.markUploaded(registered.request_id);
+      await deleteInvoiceObjects(previous.map(file=>file.storage_path)).catch(error=>failure('free_audit.old_attachments_cleanup_failed',error,{request_id:traceId,audit_request_id:registered.request_id}));
       info('free_audit.upload.completed',{request_id:traceId,audit_request_id:registered.request_id,pdf_count:pdfs.length,total_bytes:pdfs.reduce((sum,pdf)=>sum+pdf.bytes.length,0)});
-     }catch(error){await deleteInvoiceObjects(uploaded).catch(()=>{});if(oldObjectsDeleted)await repository.failUpload(registered.request_id);else await repository.markUploaded(registered.request_id).catch(()=>{});throw error;}
+     }catch(error){if(!attachmentsReplaced){await deleteInvoiceObjects(uploaded).catch(()=>{});await repository.failUpload(registered.request_id).catch(abortError=>failure('free_audit.upload_abort_failed',abortError,{request_id:traceId,audit_request_id:registered.request_id}));}throw error;}
     }
     const verificationUrl=new URL('/free-audit/verify',config.publicUrl);verificationUrl.searchParams.set('token',token);
     const email=verificationEmail(input.name,verificationUrl.href);await sendSecurityEmail({to:input.email,...email,idempotencyKey:`free-audit-verify-${tokenHash(token).slice(0,24)}`});
@@ -292,18 +295,19 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
   }
   if(retry&&req.method==='POST'){
    const traceId=requestId(req);const token=url.searchParams.get('token')??'';const hash=/^[A-Za-z0-9_-]{43}$/.test(token)?tokenHash(token):'';
-   let retryRequest:string|null=null;const uploaded:string[]=[];
+   let retryRequest:string|null=null;const uploaded:string[]=[];let attachmentsReplaced=false;let previous:import('./types.js').FreeAuditAttachment[]=[];
    try{
     const rate=await limiter.consume({scope:'free-audit-retry-ip',key:ip,limit:5,windowSeconds:86400,failClosed:true});
     if(!rate.allowed){page(res,429,retryPage('',false));req.resume();return true;}
     if(!hash){page(res,400,retryPage('',false));req.resume();return true;}
     const files=await parseRetryFiles(req);const pdfs=await pdfsFromFiles(files);
     retryRequest=await repository.beginRetry(hash);if(!retryRequest){page(res,400,retryPage('',false));return true;}
-    const previous=await repository.loadAttachments(retryRequest);await deleteInvoiceObjects(previous.map(file=>file.storage_path));await repository.clearAttachments(retryRequest);
-    for(const pdf of pdfs){const attachmentId=randomUUID();const path=freeAuditObjectKey(retryRequest,attachmentId);await putInvoiceObject(path,pdf.bytes);uploaded.push(path);await repository.saveAttachment({request_id:retryRequest,attachment_id:attachmentId,filename:pdf.name,storage_path:path,document_hash:pdf.hash,size_bytes:pdf.bytes.length});}
-    await repository.finishRetry(retryRequest,hash);info('free_audit.retry.completed',{request_id:traceId,audit_request_id:retryRequest,pdf_count:pdfs.length});page(res,200,retryPage('',true,'uploaded'));return true;
+    previous=await repository.loadAttachments(retryRequest);const replacements:import('./types.js').FreeAuditAttachment[]=[];
+    for(const pdf of pdfs){const attachmentId=randomUUID();const path=freeAuditObjectKey(retryRequest,attachmentId);await putInvoiceObject(path,pdf.bytes);uploaded.push(path);replacements.push({request_id:retryRequest,attachment_id:attachmentId,filename:pdf.name,storage_path:path,document_hash:pdf.hash,size_bytes:pdf.bytes.length});}
+    await repository.replaceAttachments(retryRequest,replacements);attachmentsReplaced=true;
+    await repository.finishRetry(retryRequest,hash);await deleteInvoiceObjects(previous.map(file=>file.storage_path)).catch(error=>failure('free_audit.old_attachments_cleanup_failed',error,{request_id:traceId,audit_request_id:retryRequest}));info('free_audit.retry.completed',{request_id:traceId,audit_request_id:retryRequest,pdf_count:pdfs.length});page(res,200,retryPage('',true,'uploaded'));return true;
    }catch(error){
-    await deleteInvoiceObjects(uploaded).catch(()=>{});if(retryRequest){await repository.clearAttachments(retryRequest).catch(()=>{});await repository.failRetry(retryRequest,hash).catch(()=>{});}
+    if(!attachmentsReplaced)await deleteInvoiceObjects(uploaded).catch(()=>{});if(retryRequest)await repository.failRetry(retryRequest,hash).catch(()=>{});
     if(error instanceof HttpError){warn('free_audit.retry.rejected',{request_id:traceId,reason:error.code});page(res,error.status,retryPage(token,true,'error'));return true;}
     failure('free_audit.retry.failed',error,{request_id:traceId,audit_request_id:retryRequest});page(res,503,retryPage(token,true,'error'));return true;
    }

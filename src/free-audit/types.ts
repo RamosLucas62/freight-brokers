@@ -9,6 +9,7 @@ export interface FreeAuditRequest {
  loads_per_month:string|null;
  status:string;
  attempts:number;
+ delivery_attempts?:number;
  result:AuditReport|null;
  result_token_hash?:string|null;
  result_expires_at?:string|null;
