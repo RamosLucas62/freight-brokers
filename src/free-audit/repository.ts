@@ -31,6 +31,12 @@ export async function clearAttachments(requestId:string):Promise<void>{
  if(error)throw new Error('FREE_AUDIT_ATTACHMENT_CLEAR_FAILED');
 }
 
+export async function replaceAttachments(requestId:string,attachments:FreeAuditAttachment[]):Promise<void>{
+ if(!attachments.length)throw new Error('FREE_AUDIT_ATTACHMENTS_REQUIRED');
+ const {data,error}=await getSupabaseClient().rpc('replace_free_audit_attachments',{p_request:requestId,p_attachments:attachments});
+ if(error||data!==true)throw new Error('FREE_AUDIT_ATTACHMENT_REPLACE_FAILED');
+}
+
 export async function markUploaded(requestId:string):Promise<void>{
  const {data,error}=await getSupabaseClient().rpc('mark_free_audit_uploaded',{p_request:requestId});
  if(error||!data)throw new Error('FREE_AUDIT_UPLOAD_FINALIZE_FAILED');
@@ -41,8 +47,8 @@ export async function releaseOffer(requestId:string,offerNumber:number):Promise<
 }
 
 export async function failUpload(requestId:string):Promise<void>{
- await getSupabaseClient().from('free_audit_attachments').delete().eq('request_id',requestId);
- await getSupabaseClient().from('free_audit_requests').update({status:'failed',last_error:'UPLOAD_FAILED',updated_at:new Date().toISOString()}).eq('id',requestId).eq('status','uploading');
+ const {error}=await getSupabaseClient().from('free_audit_requests').update({status:'failed',last_error:'UPLOAD_FAILED',updated_at:new Date().toISOString()}).eq('id',requestId).eq('status','uploading');
+ if(error)throw new Error('FREE_AUDIT_UPLOAD_ABORT_FAILED');
 }
 
 export async function verifyRequest(tokenHash:string):Promise<string|null>{
@@ -117,7 +123,7 @@ export async function failFollowup(requestId:string,day:number):Promise<void>{aw
 export async function unsubscribe(tokenHash:string):Promise<boolean>{const {data,error}=await getSupabaseClient().rpc('unsubscribe_free_audit',{p_token_hash:tokenHash});if(error)throw new Error('FREE_AUDIT_UNSUBSCRIBE_FAILED');return data===true;}
 
 export async function finishRequest(request:FreeAuditRequest,error?:unknown,retryDelivery=false,retryProcessing=false):Promise<void>{
- const failed=Boolean(error);const retryMinutes=Math.min(360,5*Math.pow(3,Math.max(0,request.attempts-1)));
+ const failed=Boolean(error);const attempt=retryDelivery?(request.delivery_attempts??1):request.attempts;const retryMinutes=Math.min(360,5*Math.pow(3,Math.max(0,attempt-1)));
  const update=failed?{status:retryDelivery?'delivery_failed':retryProcessing?'queued':'failed',last_error:error instanceof Error?error.message.slice(0,200):'FREE_AUDIT_FAILED',next_attempt_at:new Date(Date.now()+retryMinutes*60000).toISOString(),updated_at:new Date().toISOString()}
   :{status:'completed',last_error:null,completed_at:new Date().toISOString(),updated_at:new Date().toISOString()};
  const {error:dbError}=await getSupabaseClient().from('free_audit_requests').update(update).eq('id',request.id).eq('status','processing');

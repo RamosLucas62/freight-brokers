@@ -1,11 +1,16 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({claimRequest:vi.fn(),finishRequest:vi.fn(),loadAttachments:vi.fn(),saveResult:vi.fn(),issueRetry:vi.fn(),activateResult:vi.fn(),claimFollowup:vi.fn(),finishFollowup:vi.fn(),failFollowup:vi.fn()}));
 vi.mock('../../src/free-audit/repository.js',()=>({...mocks,registerRequest:vi.fn(),saveAttachment:vi.fn(),clearAttachments:vi.fn(),markUploaded:vi.fn(),releaseOffer:vi.fn(),failUpload:vi.fn(),verifyRequest:vi.fn(),claimExpired:vi.fn(),expireRequest:vi.fn(),failExpiration:vi.fn(),inspectRetry:vi.fn(),beginRetry:vi.fn(),finishRetry:vi.fn(),failRetry:vi.fn()}));
-import {processFreeAudit,processFreeAuditFollowup,recommendedPlan,resultAccessToken} from '../../src/free-audit/worker.js';
+import {assertFreeAuditReport,processFreeAudit,processFreeAuditFollowup,recommendedPlan,resultAccessToken} from '../../src/free-audit/worker.js';
 const report={run_id:'11111111-1111-4111-8111-111111111111',generated_at:new Date().toISOString(),total_invoices_processed:1,total_exceptions:0,valor_total_under_review:0,exceptions:[]};
 const request={id:'11111111-1111-4111-8111-111111111111',email:'lead@example.com',contact_name:'Lead',company_name:'Acme',phone:null,loads_per_month:null,status:'processing',attempts:1,result:report};
 beforeEach(()=>{vi.clearAllMocks();mocks.activateResult.mockResolvedValue(undefined);});
 describe('free audit worker delivery',()=>{
+ it('refuses to publish an empty or internally inconsistent audit',()=>{
+  expect(()=>assertFreeAuditReport({...report,total_invoices_processed:0})).toThrow('NO_ELIGIBLE_INVOICES');
+  expect(()=>assertFreeAuditReport({...report,total_exceptions:1})).toThrow('INVALID_FREE_AUDIT_REPORT');
+  expect(()=>assertFreeAuditReport({...report,valor_total_under_review:Number.NaN})).toThrow('INVALID_FREE_AUDIT_REPORT');
+ });
  it('maps reported volume to the three plans and creates a stable private token',()=>{expect(recommendedPlan('101-500')).toBe('core');expect(recommendedPlan('501 - 1,500')).toBe('growth');expect(recommendedPlan('Over 1,500/month')).toBe('scale');expect(recommendedPlan('2,000+')).toBe('scale');expect(resultAccessToken(request.id,'secret')).toHaveLength(43);expect(resultAccessToken(request.id,'secret')).toBe(resultAccessToken(request.id,'secret'));});
  it('reuses a saved result and sends the report with a stable idempotency key',async()=>{
   mocks.claimRequest.mockResolvedValue(request);const sender={send:vi.fn().mockResolvedValue('email-1')};

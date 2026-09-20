@@ -3,7 +3,7 @@ import {createServer} from 'node:http';
 
 const mocks=vi.hoisted(()=>({
  registerRequest:vi.fn(),saveAttachment:vi.fn(),markUploaded:vi.fn(),failUpload:vi.fn(),verifyRequest:vi.fn(),releaseOffer:vi.fn(),
- inspectRetry:vi.fn(),beginRetry:vi.fn(),finishRetry:vi.fn(),failRetry:vi.fn(),clearAttachments:vi.fn(),loadAttachments:vi.fn(),
+ inspectRetry:vi.fn(),beginRetry:vi.fn(),finishRetry:vi.fn(),failRetry:vi.fn(),clearAttachments:vi.fn(),loadAttachments:vi.fn(),replaceAttachments:vi.fn(),
  putInvoiceObject:vi.fn(),deleteInvoiceObjects:vi.fn(),sendSecurityEmail:vi.fn(),verifyTurnstile:vi.fn(),
  createCheckoutSession:vi.fn(),
  answerSupport:vi.fn(),
@@ -20,7 +20,7 @@ import {createFreeAuditHttpHandler} from '../../src/free-audit/http.js';
 const limiter={consume:vi.fn(async()=>({allowed:true,limit:3,remaining:2,retryAfter:60})),close:vi.fn(async()=>{})};
 let server:ReturnType<typeof createServer>;let base:string;
 beforeEach(async()=>{
- vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.createCheckoutSession.mockResolvedValue({url:'https://checkout.stripe.test/session'});mocks.answerSupport.mockResolvedValue('The free audit is an invoice-only snapshot.');mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);mocks.loadAttachments.mockResolvedValue([]);mocks.recordFunnelEvent.mockResolvedValue(undefined);mocks.recordCheckoutStarted.mockResolvedValue(undefined);
+ vi.clearAllMocks();vi.stubEnv('RATE_LIMIT_KEY_SECRET','x'.repeat(32));mocks.verifyTurnstile.mockResolvedValue(true);mocks.createCheckoutSession.mockResolvedValue({url:'https://checkout.stripe.test/session'});mocks.answerSupport.mockResolvedValue('The free audit is an invoice-only snapshot.');mocks.deleteInvoiceObjects.mockResolvedValue(undefined);mocks.failUpload.mockResolvedValue(undefined);mocks.loadAttachments.mockResolvedValue([]);mocks.replaceAttachments.mockResolvedValue(undefined);mocks.recordFunnelEvent.mockResolvedValue(undefined);mocks.recordCheckoutStarted.mockResolvedValue(undefined);
  const handler=createFreeAuditHttpHandler({allowedOrigins:['https://aiolympian.com','https://www.aiolympian.com'],publicUrl:'https://api.audit.aiolympian.com',offerUrl:'https://aiolympian.com/pricing'});
  server=createServer((req,res)=>void handler(req,res,limiter));await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});base=`http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -40,7 +40,11 @@ describe('free audit public boundary',()=>{
  it('stores PDFs and sends verification only for a first request',async()=>{
   mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'created',offer_allowed:false,offer_number:0});
   const response=await fetch(base+'/webhooks/free-audit',{method:'POST',headers:{Origin:'https://aiolympian.com'},body:form()});
- expect(response.status).toBe(202);expect(mocks.registerRequest).toHaveBeenCalledWith(expect.objectContaining({email:'lucas@example.com',attribution:{utm_source:'google',utm_medium:'cpc',utm_campaign:'free-audit-us',utm_term:'freight audit',utm_content:'hero'}}));expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.markUploaded).toHaveBeenCalledOnce();expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({to:'lucas@example.com',subject:expect.stringContaining('Confirm')}));
+ expect(response.status).toBe(202);expect(mocks.registerRequest).toHaveBeenCalledWith(expect.objectContaining({email:'lucas@example.com',attribution:{utm_source:'google',utm_medium:'cpc',utm_campaign:'free-audit-us',utm_term:'freight audit',utm_content:'hero'}}));expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.replaceAttachments).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111',[expect.objectContaining({filename:'invoice.pdf',storage_path:expect.stringContaining('free-audits/11111111-1111-4111-8111-111111111111/')})]);expect(mocks.markUploaded).toHaveBeenCalledOnce();expect(mocks.sendSecurityEmail).toHaveBeenCalledWith(expect.objectContaining({to:'lucas@example.com',subject:expect.stringContaining('Confirm')}));
+ });
+ it('keeps the previous attachment set when a replacement upload fails',async()=>{
+  const oldPath='free-audits/11111111-1111-4111-8111-111111111111/old.pdf';mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'replace',offer_allowed:false,offer_number:0});mocks.loadAttachments.mockResolvedValue([{request_id:'11111111-1111-4111-8111-111111111111',attachment_id:'22222222-2222-4222-8222-222222222222',filename:'old.pdf',storage_path:oldPath,document_hash:'a'.repeat(64),size_bytes:100}]);mocks.putInvoiceObject.mockRejectedValueOnce(new Error('storage offline'));
+  const response=await fetch(base+'/webhooks/free-audit',{method:'POST',headers:{Origin:'https://aiolympian.com'},body:form()});expect(response.status).toBe(503);expect(mocks.replaceAttachments).not.toHaveBeenCalled();expect(mocks.deleteInvoiceObjects).not.toHaveBeenCalledWith([oldPath]);expect(mocks.failUpload).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
  });
  it('allows the configured www origin and returns matching CORS headers',async()=>{
   mocks.registerRequest.mockResolvedValue({request_id:'11111111-1111-4111-8111-111111111111',action:'created',offer_allowed:false,offer_number:0});
@@ -79,6 +83,7 @@ describe('free audit public boundary',()=>{
   const replacement=new FormData();replacement.append('files',new Blob([Buffer.from('%PDF-1.4 replacement')],{type:'application/pdf'}),'replacement.pdf');
   const uploaded=await fetch(base+`/free-audit/retry?token=${token}`,{method:'POST',body:replacement});expect(uploaded.status).toBe(200);expect(await uploaded.text()).toContain('Your new files are in');
   expect(mocks.beginRetry).toHaveBeenCalledOnce();expect(mocks.putInvoiceObject).toHaveBeenCalledOnce();expect(mocks.finishRetry).toHaveBeenCalledOnce();expect(mocks.verifyTurnstile).not.toHaveBeenCalled();
+  expect(mocks.replaceAttachments).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111',[expect.objectContaining({filename:'replacement.pdf'})]);
  });
  it('does not expose the replacement form for an expired retry token',async()=>{
   mocks.inspectRetry.mockResolvedValue(false);const response=await fetch(base+`/free-audit/retry?token=${'c'.repeat(43)}`);expect(response.status).toBe(400);expect(await response.text()).not.toContain('type="file"');
