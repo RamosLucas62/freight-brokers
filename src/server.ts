@@ -40,7 +40,7 @@ const Config=z.object({
  CSRF_SECRET:z.string().min(32),
  OPENROUTER_ALLOWED_MODELS:z.string().min(1),OPENROUTER_DATA_PROCESSING_ACK:z.literal('true'),
  FREE_AUDIT_ORIGIN:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_ORIGINS:z.string().optional(),FREE_AUDIT_PUBLIC_URL:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_OFFER_URL:z.string().url(),
- GOOGLE_CHAT_LEADS_WEBHOOK_URL:z.string().url(),GOOGLE_CHAT_ERRORS_WEBHOOK_URL:z.string().url(),
+ GOOGLE_CHAT_LEADS_WEBHOOK_URL:z.string().url(),GOOGLE_CHAT_ERRORS_WEBHOOK_URL:z.string().url(),GOOGLE_CHAT_SUPPORT_WEBHOOK_URL:z.string().url(),
  ROSE_ROCKET_ENABLED:z.enum(['true','false']).default('false'),
  ROSE_ROCKET_CONNECT_ENABLED:z.enum(['true','false']).default('false'),
 });

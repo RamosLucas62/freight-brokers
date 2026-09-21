@@ -13,12 +13,13 @@ import {verifyTurnstile} from '../security/turnstile.js';
 import {readBody,securityHeaders,HttpError} from '../security/http.js';
 import {createHash,createHmac,randomBytes,timingSafeEqual} from 'node:crypto';
 import {sendSecurityEmail} from '../notifications/security.sender.js';
-import {notifyLeadFunnel} from '../notifications/google-chat.sender.js';
+import {notifyLeadFunnel,notifySupportRequest} from '../notifications/google-chat.sender.js';
 import {plans,planFromMetadata,periodFromMetadata,selectionFromSubscription} from '../billing/plans.js';
 import {failure,info,requestId} from '../observability/logger.js';
 import {PORTAL_ACCEPTANCE_TEXT,PRIVACY_VERSION,TERMS_VERSION} from '../legal/consent.js';
 import {RoseRocketClient} from '../tms/rose-rocket.js';
 import {encryptRoseCredentials} from '../tms/rose-rocket.credentials.js';
+import {answerPortalSupport} from '../free-audit/support.js';
 
 const uuid=z.string().uuid();
 async function body(req:IncomingMessage) {
@@ -262,8 +263,32 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  }
  if(url.pathname.startsWith('/api/portal/admin/')){
   if(!isAdmin){send(403,{error:'Administrator access required.'});return true;}
-  if(req.method!=='GET'&&!(await take({scope:'admin-mutation-user',key:user.user.id,limit:5,windowSeconds:600,failClosed:true})))return true;
+  const supportThread=url.pathname.match(/^\/api\/portal\/admin\/support\/([0-9a-f-]+)(?:\/(reply|resolve))?$/i);
+  if(req.method!=='GET'){
+   const supportMutation=Boolean(supportThread);
+   if(!(await take({scope:supportMutation?'admin-support-user':'admin-mutation-user',key:user.user.id,limit:supportMutation?60:5,windowSeconds:supportMutation?60:600,failClosed:true})))return true;
+  }
   const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);
+  if(url.pathname==='/api/portal/admin/support'&&req.method==='GET'){
+   const result=await serviceDb.rpc('portal_admin_support_queue',{p_actor:user.user.id,p_page:page});if(result.error)throw result.error;
+   send(200,result.data);return true;
+  }
+  if(supportThread){
+   const conversation=uuid.parse(supportThread[1]);const action=supportThread[2];
+   if(!action&&req.method==='GET'){
+    const result=await serviceDb.rpc('portal_admin_support_conversation',{p_actor:user.user.id,p_conversation:conversation});if(result.error)throw result.error;
+    send(200,result.data);return true;
+   }
+   if(action==='reply'&&req.method==='POST'){
+    const input=z.object({message:z.string().trim().min(1).max(4000)}).parse(await body(req));
+    const result=await serviceDb.rpc('portal_admin_support_reply',{p_actor:user.user.id,p_conversation:conversation,p_body:input.message});if(result.error)throw result.error;
+    send(200,{message:result.data});return true;
+   }
+   if(action==='resolve'&&req.method==='POST'){
+    const result=await serviceDb.rpc('portal_admin_support_resolve',{p_actor:user.user.id,p_conversation:conversation});if(result.error)throw result.error;
+    send(200,{ok:true});return true;
+   }
+  }
   if(url.pathname==='/api/portal/admin/action'&&req.method==='POST'){
    try{send(200,await adminAction(serviceDb,user.user.id,await body(req)));}
    catch(error){if(error instanceof z.ZodError)throw error;send(409,{error:error instanceof Error?error.message:'Unable to save changes.'});}return true;
@@ -308,6 +333,44 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const canManageRose=!isAdmin&&['owner','billing_admin'].includes(tenantMembership?.role??'');
  const roseTenant=tenantMembership?.audit_tenants as unknown as {status?:string}|undefined;
  const roseSetupAvailable=process.env.ROSE_ROCKET_CONNECT_ENABLED==='true';
+ if(url.pathname==='/api/portal/support/conversation'&&req.method==='GET'){
+  if(isAdmin){send(403,{error:'Open customer support from a customer account.'});return true;}
+  const conversationParam=url.searchParams.get('conversation');const conversation=conversationParam?uuid.parse(conversationParam):null;
+  const result=await serviceDb.rpc('portal_support_get_conversation',{p_tenant:tenant,p_user:user.user.id,p_conversation:conversation});if(result.error)throw result.error;
+  send(200,result.data);return true;
+ }
+ if(url.pathname==='/api/portal/support/escalate'&&req.method==='POST'){
+  if(isAdmin){send(403,{error:'Open customer support from a customer account.'});return true;}
+  if(!(await take({scope:'portal-support-escalation-user',key:user.user.id,limit:5,windowSeconds:3600,failClosed:true})))return true;
+  const input=z.object({conversation_id:uuid,problem:z.string().trim().min(10).max(2000)}).parse(await body(req));
+  operation='portal.support.escalation';
+  const escalated=await serviceDb.rpc('portal_support_escalate',{p_tenant:tenant,p_user:user.user.id,p_conversation:input.conversation_id,p_problem:input.problem});if(escalated.error)throw escalated.error;
+  const conversation=escalated.data as {id:string;notified_at?:string|null;first_response_due_at:string;customer_name:string;customer_email:string;escalation_problem:string};
+  if(!conversation.notified_at){
+   const details=tenantMembership?.audit_tenants as unknown as {name?:string}|undefined;
+   await notifySupportRequest({conversationId:conversation.id,name:conversation.customer_name,email:conversation.customer_email,accountName:details?.name??'Conta sem nome',accountId:tenant,problem:conversation.escalation_problem,dueAt:conversation.first_response_due_at});
+   const notified=await serviceDb.rpc('portal_support_mark_notified',{p_conversation:conversation.id});if(notified.error)throw notified.error;
+  }
+  info('portal.support.escalated',{request_id:requestId(req),tenant_id:tenant,actor_user_id:user.user.id,conversation_id:conversation.id});
+  operation=undefined;send(200,{conversation_id:conversation.id,status:'waiting',first_response_due_at:conversation.first_response_due_at});return true;
+ }
+ if(url.pathname==='/api/portal/support'&&req.method==='POST'){
+  if(isAdmin){send(403,{error:'Open customer support from a customer account.'});return true;}
+  if(!(await take({scope:'portal-support-user',key:user.user.id,limit:20,windowSeconds:3600,failClosed:true}))||!(await take({scope:'portal-support-tenant',key:tenant,limit:100,windowSeconds:3600,failClosed:true})))return true;
+  operation='portal.support';
+  const input=await body(req);const parsed=z.object({messages:z.array(z.object({role:z.enum(['user','assistant']),content:z.string().trim().min(1).max(1200)})).min(1).max(24),context:z.object({view:z.enum(['jobs','invoices','reports','exceptions','history','settings']).optional()}).strict().optional()}).strict().parse(input);
+  const customerName=String(user.user.user_metadata?.full_name??user.user.user_metadata?.name??user.user.email?.split('@')[0]??'Customer').trim().slice(0,200);
+  const opened=await serviceDb.rpc('portal_support_open_conversation',{p_tenant:tenant,p_user:user.user.id,p_name:customerName,p_email:user.user.email??'unknown@example.com'});if(opened.error)throw opened.error;
+  const conversation=opened.data as {id:string;status:'ai'|'waiting'|'active'|'resolved'};const latest=parsed.messages.at(-1)!;
+  const saved=await serviceDb.rpc('portal_support_append_message',{p_tenant:tenant,p_user:user.user.id,p_conversation:conversation.id,p_author_type:'customer',p_body:latest.content});if(saved.error)throw saved.error;
+  if(conversation.status==='waiting'||conversation.status==='active'){
+   operation=undefined;send(200,{conversation_id:conversation.id,status:conversation.status,human_active:true});return true;
+  }
+  const result=await answerPortalSupport(parsed);
+  const aiSaved=await serviceDb.rpc('portal_support_append_message',{p_tenant:tenant,p_user:user.user.id,p_conversation:conversation.id,p_author_type:'ai',p_body:result.answer});if(aiSaved.error)throw aiSaved.error;
+  info('portal.support.completed',{request_id:requestId(req),tenant_id:tenant,actor_user_id:user.user.id,conversation_id:conversation.id,offered_human:result.offerHuman});
+  operation=undefined;send(200,{answer:result.answer,offer_human:result.offerHuman,conversation_id:conversation.id,status:'ai'});return true;
+ }
  if(url.pathname==='/api/portal/integrations/rose-rocket'&&req.method==='POST'){
   if(!roseSetupAvailable){send(503,{error:'Rose Rocket connection setup is not available yet.'});return true;}
   if(!canManageRose){send(403,{error:'Only the company owner or billing administrator can connect Rose Rocket.'});return true;}
@@ -432,7 +495,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  }
  send(404,{error:'Page not found.'});
  }catch(error){failure('portal.request.failed',error,{request_id:requestId(req),path:url.pathname,method:req.method,...(operation?{operation}:{})});
-  const onboardingMessage=operation?.startsWith('onboarding.')?(operation==='onboarding.welcome_email_send'||operation==='onboarding.access_link_create'?'Your account was created, but the access email could not be sent. Please try again.':'We could not finish setting up your account. Your payment is safe; please try again.'):'Unable to complete the request. Check your information and try again.';
+  const onboardingMessage=operation==='portal.support'?'AI support is temporarily unavailable. Please try again in a moment.':operation?.startsWith('onboarding.')?(operation==='onboarding.welcome_email_send'||operation==='onboarding.access_link_create'?'Your account was created, but the access email could not be sent. Please try again.':'We could not finish setting up your account. Your payment is safe; please try again.'):'Unable to complete the request. Check your information and try again.';
   send(error instanceof HttpError?error.status:error instanceof z.ZodError||error instanceof SyntaxError?400:503,{error:onboardingMessage});}
  return true;
 }

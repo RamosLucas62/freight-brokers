@@ -16,6 +16,8 @@ const exception={id:id(20),invoice_id:id(10),tipo_regra:'banking_change',rule_la
 const report={run_id:id(3),generated_at:'2026-09-06T14:32:00Z',total_invoices_processed:3,total_exceptions:1,valor_total_under_review:2480,exceptions:[exception]};
 const jobs=['needs_review','processing','queued','completed','completed','blocked'].map((status,i)=>({id:id(i+1),email_id:id(i+100),status,created_at:'2026-09-06T14:32:00Z',error_code:status==='needs_review'?'PROCESSING_FAILED':null,result:status==='completed'?report:null}));
 const data={jobs,invoices:[{id:id(10),numero_fatura:'INV-1042',numero_carga:'LD-80291',carrier_name:'Northline Transport (sample)',mc_number:'123456',origem:'Dallas, TX',destino:'Atlanta, GA',valor_total:2480,data_fatura:'2026-09-05',created_at:'2026-09-06T14:32:00Z'}],reports:[{run_id:id(3),report,created_at:'2026-09-06T14:32:00Z'}],exceptions:[exception],history:[]};
+const supportConversation={id:'55555555-5555-4555-8555-555555555555',tenant_id:company,account_name:'Northline Logistics · DEMO',customer_name:'Taylor Morgan',customer_email:'taylor@northline.example',status:'waiting',escalation_problem:'I cannot resubmit a blocked invoice after correcting the sender address.',escalated_at:'2026-09-21T12:48:00Z',first_response_due_at:'2026-09-21T13:03:00Z',first_response_at:null,updated_at:'2026-09-21T12:48:00Z'};
+const supportMessages=[{id:'m1',author_type:'customer',body:'Why is invoice INV-1042 blocked?',created_at:'2026-09-21T12:46:00Z'},{id:'m2',author_type:'ai',body:'A submission may be blocked when the sender is not authorized or the document could not be processed. Check the exact From address in Settings & billing. Would you like to talk to human support within 15 minutes?',created_at:'2026-09-21T12:47:00Z'},{id:'m3',author_type:'customer',body:supportConversation.escalation_problem,created_at:'2026-09-21T12:48:00Z'}];
 createServer(async(req,res)=>{
  const url=new URL(req.url,'http://127.0.0.1');res.setHeader('Cache-Control','no-store');
  if(url.pathname.startsWith('/api/portal/')){
@@ -23,6 +25,10 @@ createServer(async(req,res)=>{
  if(route==='me'){res.end(JSON.stringify({email:adminMode?'owner@example.com · SAMPLE DATA':'demo@example.com · SAMPLE DATA',user_id:demoUsers[0].id,is_admin:adminMode,companies:adminMode?[]:[demoCompanies[0]]}));return;}
  if(route.startsWith('admin/')){
  if(!adminMode){res.writeHead(403);res.end('{"error":"Admin demo is available on port 3102."}');return;}
+ if(route==='admin/support'){res.end(JSON.stringify({rows:[supportConversation],total:1,page:0}));return;}
+ if(route===`admin/support/${supportConversation.id}`){res.end(JSON.stringify({conversation:supportConversation,messages:supportMessages}));return;}
+ if(route===`admin/support/${supportConversation.id}/reply`&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const p=JSON.parse(raw);supportMessages.push({id:randomUUID(),author_type:'admin',body:p.message,created_at:new Date().toISOString()});supportConversation.status='active';supportConversation.first_response_at=new Date().toISOString();supportConversation.updated_at=supportConversation.first_response_at;res.end(JSON.stringify({message:supportMessages.at(-1)}));return;}
+ if(route===`admin/support/${supportConversation.id}/resolve`&&req.method==='POST'){supportConversation.status='resolved';supportConversation.updated_at=new Date().toISOString();res.end('{"ok":true}');return;}
  if(route==='admin/action'&&req.method==='POST'){
  let raw='';for await(const chunk of req)raw+=chunk;const p=JSON.parse(raw);const now=new Date().toISOString();
  if(p.action==='company.create')demoCompanies.unshift({id:randomUUID(),name:p.name,alias:p.alias,status:'inactive',is_test:true,created_at:now});
@@ -42,6 +48,9 @@ createServer(async(req,res)=>{
  }
  const action=route.match(/^jobs\/([^/]+)\/(retry|review)$/);
  if(action&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);const job=jobs.find(j=>j.id===action[1]);if(action[2]==='retry')job.status='queued';data.history.unshift({id:id(Date.now()),job_id:job.id,action:action[2],note:body.note,actor_email:adminMode?'owner@example.com':'customer@example.com',actor_role:adminMode?'admin':'customer',created_at:new Date().toISOString()});res.end('{"ok":true}');return;}
+ if(route==='support/conversation'){res.end(JSON.stringify({conversation:null,messages:[]}));return;}
+ if(route==='support/escalate'&&req.method==='POST'){for await(const _chunk of req){}res.end(JSON.stringify({conversation_id:supportConversation.id,status:'waiting',first_response_due_at:supportConversation.first_response_due_at}));return;}
+ if(route==='support'&&req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const payload=JSON.parse(raw);const question=payload.messages.at(-1)?.content??'';const human=/human|person|support|humano|atendente/i.test(question);res.end(JSON.stringify({answer:human?'Of course. A support specialist can contact you in this chat within 15 minutes. Describe the issue below so I can send the full context.':'Send invoices and supporting PDFs to the private intake address shown in Settings & billing. Make sure the sender is listed under Authorized invoice senders.',offer_human:human,conversation_id:supportConversation.id,status:'ai'}));return;}
  if(data[route]){const scoped=url.searchParams.get('company')===company?data[route]:[];res.end(JSON.stringify({rows:scoped,total:scoped.length,page:0}));return;}
  res.end('{"ok":true}');return;
  }

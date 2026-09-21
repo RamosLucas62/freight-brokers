@@ -31,8 +31,10 @@ function compact(value:unknown):string|undefined{
  return String(value);
 }
 
-function webhook(kind:'leads'|'errors'):string{
- return kind==='leads'?process.env.GOOGLE_CHAT_LEADS_WEBHOOK_URL??'':process.env.GOOGLE_CHAT_ERRORS_WEBHOOK_URL??'';
+function webhook(kind:'leads'|'errors'|'support'):string{
+ if(kind==='leads')return process.env.GOOGLE_CHAT_LEADS_WEBHOOK_URL??'';
+ if(kind==='support')return process.env.GOOGLE_CHAT_SUPPORT_WEBHOOK_URL??'';
+ return process.env.GOOGLE_CHAT_ERRORS_WEBHOOK_URL??'';
 }
 
 export async function postGoogleChatMessage(url:string,text:string,request:Fetcher=fetch):Promise<void>{
@@ -87,4 +89,18 @@ export async function notifyOperationalError(record:Record<string,unknown>,reque
   `_Ação: no Better Stack, busque \`error_id = "${errorId}"\`. Dados sensíveis não são enviados para este canal._`,
  ].filter(Boolean).join('\n');
  await postGoogleChatMessage(url,lines,request);
+}
+
+export async function notifySupportRequest(input:{conversationId:string;name:string;email:string;accountName:string;accountId:string;problem:string;dueAt:string},request?:Fetcher):Promise<void>{
+ const safe=(value:string)=>value.replace(/[<>]/g,char=>char==='<'?'‹':'›').replace(/[\u0000-\u001f\u007f]/g,' ').trim();
+ const lines=[
+  '🆘 *Novo atendimento — Suporte Freight brokerage*','',
+  `*Nome:* ${safe(input.name)}`,
+  `*E-mail:* ${safe(input.email)}`,
+  `*Conta:* ${safe(input.accountName)} (${safe(input.accountId)})`,
+  `*Precisa de ajuda com:* ${safe(input.problem)}`,
+  `*Prazo de primeiro contato:* ${new Date(input.dueAt).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})}`,'',
+  `_Conversa: ${safe(input.conversationId)}_`,
+ ].join('\n');
+ await postGoogleChatMessage(webhook('support'),lines,request);
 }
