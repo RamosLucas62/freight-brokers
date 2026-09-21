@@ -23,7 +23,8 @@ transforms:
       container_name = downcase(to_string(.container_name) ?? "")
       stream = downcase(to_string(.stream) ?? "")
       is_correlated_error = exists(.error_id)
-      is_freight_audit_stderr = contains(container_name, "freight-audit") && stream == "stderr"
+      is_freight_audit_container = contains(container_name, "freight-audit") || contains(container_name, "freight-broker")
+      is_freight_audit_stderr = is_freight_audit_container && stream == "stderr"
 
       if !exists(.service) && (is_correlated_error || is_freight_audit_stderr) {
         .service = "freight-audit"
