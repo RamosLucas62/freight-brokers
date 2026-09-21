@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {notifyLeadFunnel,notifyOperationalError} from '../../src/notifications/google-chat.sender.js';
+import {notifyLeadFunnel,notifyOperationalError,notifySupportRequest} from '../../src/notifications/google-chat.sender.js';
 
 describe('Google Chat notifications',()=>{
  afterEach(()=>vi.unstubAllEnvs());
@@ -80,5 +80,11 @@ describe('Google Chat notifications',()=>{
  it('does not silently accept a missing lead webhook',async()=>{
   vi.stubEnv('GOOGLE_CHAT_LEADS_WEBHOOK_URL','');
   await expect(notifyLeadFunnel({stage:'audit_requested',requestId:'audit-4'})).rejects.toThrow('GOOGLE_CHAT_WEBHOOK_MISSING');
+ });
+ it('sends the complete human-support context to the dedicated space',async()=>{
+  vi.stubEnv('GOOGLE_CHAT_SUPPORT_WEBHOOK_URL','https://chat.example/support');const request=vi.fn(async()=>new Response('{}',{status:200}));
+  await notifySupportRequest({conversationId:'conversation-1',name:'Ana Silva',email:'ana@example.com',accountName:'Acme Logistics',accountId:'tenant-1',problem:'Não consigo reenviar uma exceção bloqueada.',dueAt:'2026-09-21T13:15:00.000Z'},request as typeof fetch);
+  expect(request).toHaveBeenCalledWith('https://chat.example/support',expect.objectContaining({method:'POST'}));const payload=JSON.parse(String(request.mock.calls[0][1]?.body));
+  expect(payload.text).toContain('Suporte Freight brokerage');expect(payload.text).toContain('*Nome:* Ana Silva');expect(payload.text).toContain('*E-mail:* ana@example.com');expect(payload.text).toContain('*Conta:* Acme Logistics (tenant-1)');expect(payload.text).toContain('Não consigo reenviar');expect(payload.text).toContain('conversation-1');
  });
 });

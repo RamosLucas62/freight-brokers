@@ -106,6 +106,7 @@ No Supabase Auth, autorize `PORTAL_URL/auth/callback`, habilite e-mail passwordl
 | `CSRF_SECRET` | Segredo de pelo menos 32 caracteres. |
 | `GOOGLE_CHAT_LEADS_WEBHOOK_URL` | Espaço comercial. |
 | `GOOGLE_CHAT_ERRORS_WEBHOOK_URL` | Espaço de erros. |
+| `GOOGLE_CHAT_SUPPORT_WEBHOOK_URL` | Espaço exclusivo `Suporte Freight brokerage`; recebe nome, e-mail, conta e problema informado pelo cliente. |
 
 O servidor de produção recusa inicialização quando uma dessas dependências obrigatórias está ausente ou inválida. Os dois webhooks do Google Chat devem apontar para espaços diferentes.
 
