@@ -3,6 +3,7 @@ services:
     image: timberio/vector:latest-alpine
     environment:
       BETTER_STACK_SOURCE_TOKEN: ${BETTER_STACK_SOURCE_TOKEN}
+      VECTOR_LOG: ${VECTOR_LOG:-debug}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./vector.yaml:/etc/vector/vector.yaml:ro
