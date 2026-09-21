@@ -1,6 +1,6 @@
 # Better Stack logs no Easypanel
 
-Esta integração envia somente os logs JSON cujo campo `service` seja `freight-audit`. Requisições automáticas a `/healthz` e `/readyz` são descartadas antes do envio para reduzir consumo. O serviço Vector lê os streams dos containers pelo socket Docker e mantém um buffer local de 256 MiB para interrupções curtas do destino.
+Esta integração envia os logs JSON cujo campo `service` seja `freight-audit`. Para não perder falhas não estruturadas, o coletor também preserva eventos com `error_id` e mensagens de `stderr` de containers cujo nome contenha `freight-audit`; quando necessário, esses eventos recebem `service = freight-audit`, `level = error` e `event = process.stderr`. Requisições automáticas a `/healthz` e `/readyz` são descartadas antes do envio para reduzir consumo. O serviço Vector lê os streams dos containers pelo socket Docker e mantém um buffer local para interrupções curtas do destino.
 
 ## 1. Criar a fonte
 
