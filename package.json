@@ -15,16 +15,16 @@
     "start:server": "node -r dotenv/config dist/server.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1127.0",
+    "@aws-sdk/client-s3": "^3.1135.0",
     "@supabase/supabase-js": "^2",
-    "dotenv": "^16",
+    "dotenv": "^18",
     "exceljs": "^4.4.0",
     "fflate": "^0.8.3",
     "ioredis": "^6.0.0",
-    "stripe": "^22.6.1",
-    "svix": "^2.3.0",
-    "uuid": "^11.1.1",
-    "zod": "^3"
+    "stripe": "^22.6.2",
+    "svix": "^2.5.0",
+    "uuid": "^14.0.2",
+    "zod": "^4"
   },
   "devDependencies": {
     "@types/node": "^24",
