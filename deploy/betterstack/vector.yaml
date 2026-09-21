@@ -15,9 +15,9 @@ transforms:
     inputs:
       - easypanel_containers
     source: |
-      structured, error = parse_json(.message)
-      if error == null && is_object(structured) {
-        . = merge(., structured)
+      structured = parse_json(.message) ?? {}
+      if is_object(structured) {
+        . = merge(., object!(structured))
       }
 
   keep_freight_audit:
@@ -49,5 +49,5 @@ sinks:
       enabled: true
     buffer:
       type: disk
-      max_size: 268435456
+      max_size: 300000000
       when_full: drop_newest
