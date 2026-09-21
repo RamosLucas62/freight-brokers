@@ -51,13 +51,25 @@ describe('Google Chat notifications',()=>{
  it('formats error alerts with id, error and timestamp',async()=>{
   vi.stubEnv('GOOGLE_CHAT_ERRORS_WEBHOOK_URL','https://chat.example/errors');
   const request=vi.fn(async()=>new Response('{}',{status:200}));
-  await notifyOperationalError({timestamp:'2026-09-11T10:00:00.000Z',event:'free_audit.worker.failed',audit_request_id:'audit-2',error_code:'NO_FREE_AUDIT_ATTACHMENTS'},request as typeof fetch);
+  await notifyOperationalError({timestamp:'2026-09-11T10:00:00.000Z',event:'free_audit.worker.failed',error_id:'error-2',audit_request_id:'audit-2',error_code:'NO_FREE_AUDIT_ATTACHMENTS'},request as typeof fetch);
   const payload=JSON.parse(String(request.mock.calls[0][1]?.body));
   expect(payload.text).toContain('Erro no Freight Audit');
   expect(payload.text).toContain('*Onde aconteceu:* Processamento da auditoria gratuita');
   expect(payload.text).toContain('*Código:* NO_FREE_AUDIT_ATTACHMENTS');
-  expect(payload.text).toContain('*Referência:* audit-2');
+  expect(payload.text).toContain('*ID do erro:* error-2');
+  expect(payload.text).toContain('*ID da operação:* audit-2');
+  expect(payload.text).toContain('error_id = "error-2"');
   expect(payload.text).toContain('*Horário:* 2026-09-11T10:00:00.000Z');
+ });
+ it('keeps queue-level alerts searchable when no operation id exists',async()=>{
+  vi.stubEnv('GOOGLE_CHAT_ERRORS_WEBHOOK_URL','https://chat.example/errors');
+  const request=vi.fn(async()=>new Response('{}',{status:200}));
+  await notifyOperationalError({timestamp:'2026-09-21T12:35:10.187Z',event:'free_audit.worker.tick_failed',error_id:'queue-error-1',error_code:'FREE_AUDIT_QUEUE_FAILED'},request as typeof fetch);
+  const payload=JSON.parse(String(request.mock.calls[0][1]?.body));
+  expect(payload.text).toContain('*Onde aconteceu:* Fila da auditoria gratuita');
+  expect(payload.text).toContain('*ID do erro:* queue-error-1');
+  expect(payload.text).not.toContain('sem id');
+  expect(payload.text).not.toContain('*ID da operação:*');
  });
  it('retries temporary webhook failures',async()=>{
   vi.stubEnv('GOOGLE_CHAT_LEADS_WEBHOOK_URL','https://chat.example/leads');

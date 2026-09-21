@@ -32,10 +32,13 @@ Depois do deploy:
 4. Confirme que aparecem `event`, `level`, `request_id` e `timestamp` como campos separados.
 5. Gere uma falha controlada em homologação e confirme a chegada de um evento com `level = error`.
 
+Todo evento de erro recebe um `error_id` UUID, mesmo quando a falha acontece antes de existir um job ou uma requisição. Esse é o identificador mostrado no Google Chat e deve ser a primeira busca durante um incidente.
+
 Consultas úteis:
 
 ```text
 service = "freight-audit" AND level = "error"
+service = "freight-audit" AND error_id = "ID_COPIADO_DO_GOOGLE_CHAT"
 service = "freight-audit" AND request_id = "ID_DA_REQUISICAO"
 service = "freight-audit" AND event = "free_audit.worker.failed"
 ```

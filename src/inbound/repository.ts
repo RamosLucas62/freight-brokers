@@ -1,4 +1,4 @@
-import { getSupabaseClient } from '../config/supabase.js';
+import { getSupabaseClient,operationalDatabaseError } from '../config/supabase.js';
 import type { InvoiceExtractionResult } from '../types/invoice.types.js';
 import type { AuditReport } from '../types/report.types.js';
 import { recipientAliases, type ReceivedEvent } from './events.js';
@@ -13,11 +13,11 @@ export async function enqueue(eventId:string,event:ReceivedEvent) {
  const {error}=await getSupabaseClient().rpc('enqueue_audit_email',{
   p_event_id:eventId,p_email_id:event.data.email_id,p_aliases:recipientAliases(event),
  });
- if(error)throw new Error('QUEUE_UNAVAILABLE');
+ if(error)throw operationalDatabaseError('QUEUE_UNAVAILABLE',error);
 }
 export async function claim():Promise<InboundJob|null> {
  const {data,error}=await getSupabaseClient().rpc('claim_audit_email');
- if(error)throw new Error('QUEUE_UNAVAILABLE');
+ if(error)throw operationalDatabaseError('QUEUE_UNAVAILABLE',error);
  return data?.[0]??null;
 }
 export async function finish(job:InboundJob,status:string,result:AuditReport|null,errorCode:string|null) {

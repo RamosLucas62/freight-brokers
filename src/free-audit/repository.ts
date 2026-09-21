@@ -1,4 +1,4 @@
-import {getSupabaseClient} from '../config/supabase.js';
+import {getSupabaseClient,operationalDatabaseError} from '../config/supabase.js';
 import type {AuditReport} from '../types/report.types.js';
 import type {FreeAuditAttachment,FreeAuditFollowup,FreeAuditPublicResult,FreeAuditRegistration,FreeAuditRequest} from './types.js';
 import {createHash} from 'node:crypto';
@@ -85,7 +85,7 @@ export async function failRetry(requestId:string,retryTokenHash:string):Promise<
 
 export async function claimRequest():Promise<FreeAuditRequest|null>{
  const {data,error}=await getSupabaseClient().rpc('claim_free_audit_request');
- if(error)throw new Error('FREE_AUDIT_QUEUE_FAILED');
+ if(error)throw operationalDatabaseError('FREE_AUDIT_QUEUE_FAILED',error);
  return ((data as FreeAuditRequest[]|null)?.[0])??null;
 }
 

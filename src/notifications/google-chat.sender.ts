@@ -10,8 +10,10 @@ const errorLocations:Record<string,string>={
  'free_audit.checkout.failed':'Checkout da auditoria gratuita',
  'free_audit.submission.failed':'Envio da auditoria gratuita',
  'free_audit.worker.failed':'Processamento da auditoria gratuita',
+ 'free_audit.worker.tick_failed':'Fila da auditoria gratuita',
  'free_audit.followup.failed':'Envio de follow-up',
  'inbound.worker.failed':'Processamento de documentos',
+ 'inbound.worker.tick_failed':'Fila de documentos recebidos',
  'stripe.event.failed':'Atualização da assinatura Stripe',
  'stripe.event.completion_record_failed':'Confirmação do evento Stripe na fila',
  'stripe.event.failure_record_failed':'Registro da nova tentativa do evento Stripe',
@@ -68,19 +70,21 @@ export async function notifyLeadFunnel(input:{stage:LeadStage;requestId?:string|
 
 export async function notifyOperationalError(record:Record<string,unknown>,request?:Fetcher):Promise<void>{
  const url=webhook('errors');
- const id=compact(record.request_id)??compact(record.audit_request_id)??compact(record.job_id)??compact(record.event_id)??compact(record.delivery_id)??compact(record.deletion_job_id)??compact(record.tenant_id)??'sem id';
+ const errorId=compact(record.error_id)??'sem id';
+ const operationId=compact(record.request_id)??compact(record.audit_request_id)??compact(record.job_id)??compact(record.event_id)??compact(record.delivery_id)??compact(record.deletion_job_id)??compact(record.tenant_id);
  const code=compact(record.error_code)??compact(record.event)??'UNCLASSIFIED_ERROR';
  const event=compact(record.event)??'unknown';const location=errorLocations[event]??event;
  const lines=[
   '🚨 *Erro no Freight Audit*','',
   `*Onde aconteceu:* ${location}`,
   `*Código:* ${code}`,
-  `*Referência:* ${id}`,
+  `*ID do erro:* ${errorId}`,
+  operationId?`*ID da operação:* ${operationId}`:undefined,
   compact(record.stage)?`*Etapa técnica:* ${compact(record.stage)}`:undefined,
   compact(record.upstream_status)?`*Resposta externa:* HTTP ${compact(record.upstream_status)}`:undefined,
   compact(record.attempt)?`*Tentativa:* ${compact(record.attempt)}`:undefined,
   `*Horário:* ${compact(record.timestamp)??new Date().toISOString()}`,'',
-  '_Ação: abra os logs usando a referência acima. Dados sensíveis não são enviados para este canal._',
+  `_Ação: no Better Stack, busque \`error_id = "${errorId}"\`. Dados sensíveis não são enviados para este canal._`,
  ].filter(Boolean).join('\n');
  await postGoogleChatMessage(url,lines,request);
 }

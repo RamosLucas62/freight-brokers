@@ -311,8 +311,8 @@ Isso é esperado. O banco deduplica por Event ID e compara o timestamp do evento
 
 Todo erro deve ser localizável por uma referência segura. O fluxo de resposta é:
 
-1. copiar a referência do Google Chat ou `X-Request-Id`;
-2. buscar no Better Stack;
+1. copiar o `ID do erro` do Google Chat ou o `X-Request-Id` retornado ao cliente;
+2. buscar no Better Stack por `error_id = "ID_COPIADO"` ou `request_id = "ID_COPIADO"`;
 3. identificar `event`, `stage`, `error_code`, `attempt` e `upstream_status`;
 4. confirmar se existe retry agendado antes de intervir;
 5. corrigir dependência/configuração ou orientar substituição do documento;

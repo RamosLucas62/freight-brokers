@@ -1,6 +1,18 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 export const timedFetch:typeof fetch=(input,init={})=>fetch(input,{...init,signal:init.signal??AbortSignal.timeout(10000)});
 
+export function operationalDatabaseError(code:string,source:unknown):Error{
+  const detail=typeof source==='object'&&source!==null?source as {code?:unknown;message?:unknown}:{};
+  const message=typeof detail.message==='string'?detail.message.toLowerCase():'';
+  const providerReason=/(timeout|timed out|abort)/.test(message)
+    ?'SUPABASE_TIMEOUT'
+    :/(fetch|network|dns|connect|socket)/.test(message)?'SUPABASE_NETWORK_ERROR':'SUPABASE_QUERY_ERROR';
+  return Object.assign(new Error(code),{
+    providerReason,
+    ...(typeof detail.code==='string'&&/^[A-Za-z0-9_-]{2,40}$/.test(detail.code)?{providerCode:detail.code}:{}),
+  });
+}
+
 let _client: SupabaseClient | null = null;
 
 export function getSupabaseClient(): SupabaseClient {
