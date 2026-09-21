@@ -20,6 +20,21 @@ transforms:
         . = merge(., object!(structured))
       }
 
+      container_name = downcase(to_string(.container_name) ?? "")
+      stream = downcase(to_string(.stream) ?? "")
+      is_correlated_error = exists(.error_id)
+      is_freight_audit_stderr = contains(container_name, "freight-audit") && stream == "stderr"
+
+      if !exists(.service) && (is_correlated_error || is_freight_audit_stderr) {
+        .service = "freight-audit"
+        if (to_string(.level) ?? "") == "" {
+          .level = "error"
+        }
+        if (to_string(.event) ?? "") == "" {
+          .event = "process.stderr"
+        }
+      }
+
   keep_freight_audit:
     type: filter
     inputs:
