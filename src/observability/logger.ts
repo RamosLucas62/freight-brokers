@@ -38,11 +38,14 @@ export function errorFields(error:unknown):Fields{
 }
 
 export function log(level:Level,event:string,fields:Fields={}):void{
- const record=clean({timestamp:new Date().toISOString(),level,service:'freight-audit',event,...fields}) as Fields;
+ const errorId=level==='error'
+  ?(typeof fields.error_id==='string'&&fields.error_id?fields.error_id:randomUUID())
+  :undefined;
+ const record=clean({timestamp:new Date().toISOString(),level,service:'freight-audit',event,...fields,...(errorId?{error_id:errorId}:{})}) as Fields;
  const line=JSON.stringify(record);
  (level==='error'?process.stderr:process.stdout).write(`${line}\n`);
  if(level==='error')void notifyOperationalError(record).catch(error=>{
-  const fallback=clean({timestamp:new Date().toISOString(),level:'error',service:'freight-audit',event:'google_chat.error_notification.failed',original_event:event,...errorFields(error)});
+  const fallback=clean({timestamp:new Date().toISOString(),level:'error',service:'freight-audit',event:'google_chat.error_notification.failed',error_id:randomUUID(),original_error_id:errorId,original_event:event,...errorFields(error)});
   process.stderr.write(`${JSON.stringify(fallback)}\n`);
  });
 }
