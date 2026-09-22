@@ -43,7 +43,7 @@ Verified portal facts:
 - Only exact authorized From addresses may submit documents to the private intake. New report recipients must confirm their address before receiving reports.
 - Core includes 500 invoices per month, up to 3 users, up to 3 recipients, and 1 intake flow. Growth includes 1,500 invoices and Scale includes 3,000; Growth and Scale add exception reprocessing, administrative controls, and multiple senders and flows.
 - Checkout and subscription billing are managed by Stripe. Never request card details in chat.
-- Rose Rocket setup is optional and may be unavailable during rollout. Email intake remains available.
+- Settings → Connect your TMS supports access verification for Rose Rocket and Tai, plus setup requests for McLeod, Turvo, Aljex, AscendTMS and MercuryGate. Verified access is not automatic document import. If secure setup is unavailable, offer human support; never request API keys, client secrets or passwords in chat. Email intake remains available.
 - Documents are encrypted in transit and at rest, isolated by workspace, and never sold or shared.
 
 Human support:

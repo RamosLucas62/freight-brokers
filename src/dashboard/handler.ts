@@ -18,7 +18,10 @@ import {plans,planFromMetadata,periodFromMetadata,selectionFromSubscription} fro
 import {failure,info,requestId} from '../observability/logger.js';
 import {PORTAL_ACCEPTANCE_TEXT,PRIVACY_VERSION,TERMS_VERSION} from '../legal/consent.js';
 import {RoseRocketClient} from '../tms/rose-rocket.js';
-import {encryptRoseCredentials} from '../tms/rose-rocket.credentials.js';
+import {encryptRoseCredentials,roseCredentialsReady} from '../tms/rose-rocket.credentials.js';
+import {tmsProviders,assistedProviderIds} from '../tms/catalog.js';
+import {encryptTmsCredentials,tmsCredentialsReady} from '../tms/credentials.js';
+import {TaiClient,TaiCredentials} from '../tms/tai.js';
 import {answerPortalSupport} from '../free-audit/support.js';
 
 const uuid=z.string().uuid();
@@ -269,6 +272,11 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
    if(!(await take({scope:supportMutation?'admin-support-user':'admin-mutation-user',key:user.user.id,limit:supportMutation?60:5,windowSeconds:supportMutation?60:600,failClosed:true})))return true;
   }
   const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);
+  if(url.pathname==='/api/portal/admin/integrations'&&req.method==='GET'){
+   const result=await serviceDb.from('audit_tms_connections').select('tenant_id,provider,status,account_label,verified_at,requested_at,updated_at,audit_tenants(name)',{count:'exact'}).order('updated_at',{ascending:false}).range(page*50,page*50+49);
+   if(result.error)throw result.error;
+   send(200,{rows:result.data??[],total:result.count??0});return true;
+  }
   if(url.pathname==='/api/portal/admin/support'&&req.method==='GET'){
    const result=await serviceDb.rpc('portal_admin_support_queue',{p_actor:user.user.id,p_page:page});if(result.error)throw result.error;
    send(200,result.data);return true;
@@ -339,7 +347,43 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const tenantMembership=membership.data?.find(m=>m.tenant_id===tenant);
  const canManageRose=!isAdmin&&['owner','billing_admin'].includes(tenantMembership?.role??'');
  const roseTenant=tenantMembership?.audit_tenants as unknown as {status?:string}|undefined;
- const roseSetupAvailable=process.env.ROSE_ROCKET_CONNECT_ENABLED==='true';
+ const roseSetupAvailable=process.env.ROSE_ROCKET_CONNECT_ENABLED!=='false'&&roseCredentialsReady();
+ if(url.pathname==='/api/portal/integrations'&&req.method==='GET'){
+  const connections=await serviceDb.from('audit_tms_connections').select('provider,status,account_label,verified_at,requested_at').eq('tenant_id',tenant);
+  if(connections.error)throw connections.error;
+  send(200,{providers:tmsProviders.map(provider=>({...provider,can_manage:canManageRose,
+   setup_available:provider.id==='rose-rocket'?roseSetupAvailable:provider.id==='tai'?tmsCredentialsReady():true,
+   connection:(connections.data??[]).find(row=>row.provider===provider.id)??null}))});return true;
+ }
+ const tmsAction=url.pathname.match(/^\/api\/portal\/integrations\/([a-z-]+)\/(connect|request|disconnect)$/);
+ if(tmsAction&&tmsAction[1]!=='rose-rocket'&&req.method==='POST'){
+  const [,provider,action]=tmsAction;
+  if(!tmsProviders.some(item=>item.id===provider)){send(404,{error:'Unknown TMS.'});return true;}
+  if(!canManageRose){send(403,{error:'Only the company owner or billing administrator can manage TMS connections.'});return true;}
+  if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Verify your authenticator before managing TMS connections.'});return true;}
+  if(action!=='disconnect'&&roseTenant?.status!=='active'){send(409,{error:'This company must be active to configure a TMS.'});return true;}
+  if(!(await take({scope:'tms-setup-user',key:user.user.id,limit:10,windowSeconds:3600,failClosed:true})))return true;
+  if(action==='disconnect'){
+   const stopped=await serviceDb.from('audit_tms_connections').update({status:'disconnected',credentials_ciphertext:null,verified_at:null,requested_at:null,account_label:null,updated_at:new Date().toISOString(),updated_by:user.user.id}).eq('tenant_id',tenant).eq('provider',provider);
+   if(stopped.error)throw stopped.error;
+   send(200,{status:'disconnected'});return true;
+  }
+  let changes;
+  if(action==='request'&&assistedProviderIds.some(id=>id===provider)){
+   z.object({}).strict().parse(await body(req));
+   changes={status:'requested',credentials_ciphertext:null,verified_at:null,account_label:null,requested_at:new Date().toISOString()};
+  }else if(action==='connect'&&provider==='tai'){
+   if(!tmsCredentialsReady()){send(503,{error:'Secure connection storage needs to be configured by Olympian. Contact support; do not send your API key.'});return true;}
+   const credentials=TaiCredentials.parse(await body(req));
+   try{await new TaiClient(credentials).verifyAccess();}
+   catch{send(422,{error:'Tai could not verify access. Check your site code, API key and Broker API permissions, then retry. No connection was changed.'});return true;}
+   changes={status:'verified',credentials_ciphertext:encryptTmsCredentials(tenant,provider,credentials),account_label:`${credentials.site}.taicloud.net`,verified_at:new Date().toISOString(),requested_at:null};
+  }else{send(409,{error:'This TMS requires assisted setup.'});return true;}
+  const saved=await serviceDb.from('audit_tms_connections').upsert({tenant_id:tenant,provider,...changes,updated_at:new Date().toISOString(),updated_by:user.user.id},{onConflict:'tenant_id,provider'});
+  if(saved.error)throw saved.error;
+  info('tms.connection.updated',{tenant_id:tenant,provider,status:changes.status,actor_user_id:user.user.id});
+  send(200,{status:changes.status});return true;
+ }
  if(url.pathname==='/api/portal/support/conversation'&&req.method==='GET'){
   if(isAdmin){send(403,{error:'Open customer support from a customer account.'});return true;}
   const conversationParam=url.searchParams.get('conversation');const conversation=conversationParam?uuid.parse(conversationParam):null;
@@ -379,8 +423,8 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   operation=undefined;send(200,{answer:result.answer,offer_human:result.offerHuman,conversation_id:conversation.id,status:'ai'});return true;
  }
  if(url.pathname==='/api/portal/integrations/rose-rocket'&&req.method==='POST'){
-  if(!roseSetupAvailable){send(503,{error:'Rose Rocket connection setup is not available yet.'});return true;}
   if(!canManageRose){send(403,{error:'Only the company owner or billing administrator can connect Rose Rocket.'});return true;}
+  if(!roseSetupAvailable){send(503,{error:'Rose Rocket secure setup needs to be enabled by Olympian. Contact support; do not send credentials.'});return true;}
   if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Verify your authenticator before connecting Rose Rocket.'});return true;}
   if(roseTenant?.status!=='active'){send(409,{error:'This company must be active to connect Rose Rocket.'});return true;}
   if(!(await take({scope:'rose-connect-user',key:user.user.id,limit:3,windowSeconds:3600,failClosed:true})))return true;
@@ -416,7 +460,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
    db.from('audit_billing_customers').select('billing_email,stripe_subscription_id,status,trial_ends_at,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_inbound_sender_rules').select('sender_email').eq('tenant_id',tenant).eq('enabled',true).order('sender_email'),
    db.from('audit_invoice_usage').select('id',{count:'exact',head:true}).eq('tenant_id',tenant).gte('created_at',monthStart.toISOString()),
-   roseSetupAvailable?serviceDb.from('audit_rose_connections').select('org_id,enabled,connection_state,connected_at').eq('tenant_id',tenant).maybeSingle():Promise.resolve({data:null,error:null}),
+   serviceDb.from('audit_rose_connections').select('org_id,enabled,connection_state,connected_at').eq('tenant_id',tenant).maybeSingle(),
   ]);
   if(settings.error||contacts.error||billing.error||senders.error||usage.error||roseConnection.error)throw new Error('Settings lookup failed');
   // Billing state is synchronized by Stripe webhooks. Reading Settings must stay

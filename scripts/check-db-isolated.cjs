@@ -6,7 +6,7 @@ try{
  let sql="CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),email text UNIQUE,created_at timestamptz DEFAULT now(),last_sign_in_at timestamptz); CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$; CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql AS $$ SELECT jsonb_build_object('sub',current_setting('request.jwt.claim.sub',true),'aal',current_setting('request.jwt.claim.aal',true)) $$; GRANT USAGE ON SCHEMA auth TO authenticated,service_role; GRANT EXECUTE ON FUNCTION auth.uid(),auth.jwt() TO authenticated,service_role; BEGIN;\n";
  sql+=readFileSync(join(root,'db/schema.sql'),'utf8');
  for(const file of readdirSync(join(root,'db/migrations')).filter(f=>f.endsWith('.sql')).sort())sql+='\n'+readFileSync(join(root,'db/migrations',file),'utf8');
- for(const file of ['tenant-isolation.sql','customer-portal.sql','global-admin.sql','notifications.sql','subscription-lifecycle.sql','security-hardening.sql','rose-rocket.sql'])sql+='\n'+readFileSync(join(root,'tests/db',file),'utf8');
+ for(const file of ['tenant-isolation.sql','customer-portal.sql','global-admin.sql','notifications.sql','subscription-lifecycle.sql','security-hardening.sql','rose-rocket.sql','tms-connections.sql'])sql+='\n'+readFileSync(join(root,'tests/db',file),'utf8');
  sql+='\nROLLBACK;';
  execFileSync(join(bin,'psql'),['-h',dir,'-U',userInfo().username,'-d','postgres','-v','ON_ERROR_STOP=1','-q'],{input:sql,stdio:['pipe','pipe','pipe']});
  console.log('All migrations and tenant, portal, global-admin and Rose Rocket SQL checks passed in isolated PostgreSQL.');
