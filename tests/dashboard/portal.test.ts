@@ -1,9 +1,10 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {createApp} from '../../src/http/app.js';
+import {McLeodClient} from '../../src/tms/mcleod.js';
 import {TaiClient} from '../../src/tms/tai.js';
 import {decryptTmsCredentials} from '../../src/tms/credentials.js';
 import {RoseRocketClient} from '../../src/tms/rose-rocket.js';
-const tms=vi.hoisted(()=>({rows:[] as any[],lastWrite:null as any,error:null as any,filters:[] as any[]}));
+const tms=vi.hoisted(()=>({rows:[] as any[],lastWrite:null as any,writes:[] as any[],error:null as any,filters:[] as any[]}));
 const rose=vi.hoisted(()=>({role:'owner',row:null as null|{org_id:string},lastWrite:null as any}));
 const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,guideCompletedAt:null as string|null,legalAcceptedAt:'2026-09-12T18:00:00.000Z' as string|null,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),refreshSession:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),retrieveSubscription:vi.fn(),sendSecurityEmail:vi.fn(),answerPortalSupport:vi.fn(),notifySupportRequest:vi.fn(),notifyLeadFunnel:vi.fn(),notifyOperationalError:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),gte:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
 vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,refreshSession:mocks.refreshSession,signInWithOtp:mocks.otp}})}));
@@ -15,7 +16,7 @@ vi.mock('../../src/free-audit/support.js',()=>({answerPortalSupport:mocks.answer
 const tenant='11111111-1111-4111-8111-111111111111';const other='22222222-2222-4222-8222-222222222222';
 let server:ReturnType<typeof createApp>,base:string;
 beforeEach(async()=>{
- rose.role='owner';rose.row=null;rose.lastWrite=null;tms.rows=[];tms.lastWrite=null;tms.error=null;tms.filters=[];vi.stubEnv('TMS_CREDENTIAL_KEY','');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY','');vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','');
+ vi.stubEnv('WORKER_ENABLED','true');rose.role='owner';rose.row=null;rose.lastWrite=null;tms.rows=[];tms.lastWrite=null;tms.writes=[];tms.error=null;tms.filters=[];vi.stubEnv('TMS_CREDENTIAL_KEY','');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY','');vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','');
  vi.resetAllMocks();mocks.isAdmin=false;mocks.enabled=true;mocks.guideCompletedAt=null;mocks.legalAcceptedAt='2026-09-12T18:00:00.000Z';vi.stubEnv('PORTAL_URL','https://portal.example.com');vi.stubEnv('SUPABASE_ANON_KEY','public-key');vi.stubEnv('SUPABASE_URL','https://example.supabase.co');
  mocks.getUser.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'}},error:null});
  mocks.refreshSession.mockResolvedValue({data:{user:null,session:null},error:{message:'invalid refresh token'}});
@@ -30,7 +31,7 @@ beforeEach(async()=>{
   if(table==='audit_portal_legal_acceptances'){const chain:any={eq:()=>chain,maybeSingle:()=>Promise.resolve({data:mocks.legalAcceptedAt?{accepted_at:mocks.legalAcceptedAt}:null,error:null})};return{select:()=>chain};}
   if(table==='audit_memberships')return{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,role:rose.role,audit_tenants:{id:tenant,name:'Company',alias:'company',status:'active'}}],error:null})})};
   if(table==='audit_tms_connections'){
-   const chain:any={select:()=>chain,eq:(...args:any[])=>{tms.filters.push(args);return chain;},order:()=>chain,range:()=>chain,upsert:async(data:any)=>{tms.lastWrite=data;return {error:tms.error};},update:(data:any)=>{tms.lastWrite=data;return chain;},then:(resolve:any)=>resolve({data:tms.rows,error:tms.error,count:tms.rows.length})};return chain;
+   const chain:any={select:()=>chain,eq:(...args:any[])=>{tms.filters.push(args);return chain;},order:()=>chain,range:()=>chain,upsert:async(data:any)=>{tms.lastWrite=data;tms.writes.push(data);return {error:tms.error};},update:(data:any)=>{tms.lastWrite=data;tms.writes.push(data);return chain;},then:(resolve:any)=>resolve({data:tms.rows,error:tms.error,count:tms.rows.length})};return chain;
   }
   if(table==='audit_rose_connections'){
    const chain:any={select:()=>chain,eq:()=>chain,maybeSingle:()=>Promise.resolve({data:rose.row,error:null}),insert:async(data:any)=>{rose.lastWrite=data;return {error:null};},update:(data:any)=>{rose.lastWrite=data;return chain;},then:(resolve:any)=>resolve({error:null})};
@@ -82,13 +83,12 @@ it('accepts only an owner or billing administrator for Rose Rocket setup',async(
  const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:'{}'});
  expect(r.status).toBe(403);expect(mocks.from).not.toHaveBeenCalledWith('audit_rose_connections');
 });
-it('verifies a Rose Rocket service account but stores it encrypted and disabled',async()=>{
+it('verifies Rose credentials and registers automatic document delivery',async()=>{
  vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));
- const verified=vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockResolvedValue();
+ const verified=vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockResolvedValue();const webhook=vi.spyOn(RoseRocketClient.prototype,'registerDocumentWebhook').mockResolvedValue();
  const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({org_id:other,user_id:'33333333-3333-4333-8333-333333333333',client_id:'client-1',client_secret:'private-secret'})});
- expect(r.status).toBe(200);expect(await r.json()).toMatchObject({status:'pending',org_id:other});
- expect(verified).toHaveBeenCalledOnce();expect(rose.lastWrite).toMatchObject({org_id:other,tenant_id:tenant,connection_state:'pending',enabled:false});
- expect(rose.lastWrite.credentials_ciphertext).not.toContain('private-secret');
+ expect(r.status).toBe(200);expect(await r.json()).toMatchObject({status:'active',org_id:other});
+ expect(verified).toHaveBeenCalledOnce();expect(webhook).toHaveBeenCalledWith(expect.stringContaining('/webhooks/rose-sync/'));expect(mocks.rpc).toHaveBeenCalledWith('activate_rose_document_sync',expect.objectContaining({p_tenant:tenant}));expect(tms.writes.find(row=>row.credentials_ciphertext).credentials_ciphertext).not.toContain('private-secret');expect(tms.lastWrite).toMatchObject({sync_enabled:false});
 });
 it('does not store Rose Rocket credentials when the provider rejects them',async()=>{
  vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));
@@ -98,7 +98,7 @@ it('does not store Rose Rocket credentials when the provider rejects them',async
 });
 it('disconnects Rose Rocket without exposing or deleting audit records',async()=>{
  const r=await fetch(base+`/api/portal/integrations/rose-rocket/disconnect?company=${tenant}`,{method:'POST',headers,body:'{}'});
- expect(r.status).toBe(200);expect(rose.lastWrite).toMatchObject({credentials_ciphertext:null,connected_at:null,enabled:false,connection_state:'disconnected'});
+ expect(r.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('disconnect_rose_document_sync',{p_tenant:tenant});
 });
 it('scopes and paginates every supported collection',async()=>{for(const collection of ['jobs','invoices','reports','exceptions','history']){const r=await fetch(base+`/api/portal/${collection}?company=${tenant}&page=2`,{headers});expect(r.status).toBe(200);expect(mocks.query.eq).toHaveBeenLastCalledWith('tenant_id',tenant);expect(mocks.query.range).toHaveBeenLastCalledWith(100,149);}});
 it('normalizes an empty database result so the portal refresh remains renderable',async()=>{mocks.query.range.mockResolvedValueOnce({data:null,count:null,error:null});const r=await fetch(base+`/api/portal/jobs?company=${tenant}`,{headers});expect(r.status).toBe(200);expect(await r.json()).toEqual({rows:[],total:0,page:0});});
@@ -234,8 +234,8 @@ it('rejects viewer, global-admin customer mutations and missing required MFA',as
  }
  expect(tms.lastWrite).toBeNull();
 });
-it.each(['mcleod','turvo','aljex','ascendtms','mercurygate'])('records %s setup requests without marking them connected',async provider=>{
- const r=await fetch(base+`/api/portal/integrations/${provider}/request?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(200);expect(await r.json()).toEqual({status:'requested'});expect(tms.lastWrite).toMatchObject({provider,tenant_id:tenant,credentials_ciphertext:null,verified_at:null});
+it.each(['mcleod','turvo','aljex','ascendtms','mercurygate'])('refuses a %s support request instead of pretending to connect',async provider=>{
+ const r=await fetch(base+`/api/portal/integrations/${provider}/request?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(409);expect(tms.lastWrite).toBeNull();
 });
 it('rejects unknown providers and unsupported connection methods',async()=>{
  for(const [path,status] of [['unknown/connect',404],['turvo/connect',409],['tai/request',409]]){const r=await fetch(base+`/api/portal/integrations/${path}?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(status);}
@@ -244,8 +244,8 @@ it('rejects unknown providers and unsupported connection methods',async()=>{
 it('disconnects even when credential storage is unavailable and clears saved secrets',async()=>{
  const r=await fetch(base+`/api/portal/integrations/tai/disconnect?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(200);expect(tms.lastWrite).toMatchObject({status:'disconnected',credentials_ciphertext:null,verified_at:null});expect(tms.filters).toContainEqual(['tenant_id',tenant]);expect(tms.filters).toContainEqual(['provider','tai']);
 });
-it('does not report a saved request when persistence fails',async()=>{
- tms.error={code:'42P01'};const r=await fetch(base+`/api/portal/integrations/turvo/request?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(503);
+it('does not report automatic import as configured when persistence fails',async()=>{
+ vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,9).toString('base64url'));vi.spyOn(TaiClient.prototype,'verifyAccess').mockResolvedValue();tms.error={code:'42P01'};const r=await fetch(base+`/api/portal/integrations/tai/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({site:'acme',api_key:'key'})});expect(r.status).toBe(503);
 });
 it('restricts the TMS administrative queue to global administrators',async()=>{
  let r=await fetch(base+'/api/portal/admin/integrations',{headers});expect(r.status).toBe(403);mocks.isAdmin=true;
@@ -255,4 +255,25 @@ it('enables Rose setup with a valid key unless explicitly paused',async()=>{
  vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,1).toString('base64url'));
  let r=await fetch(base+`/api/portal/integrations?company=${tenant}`,{headers});expect((await r.json()).providers[0].setup_available).toBe(true);
  vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','false');r=await fetch(base+`/api/portal/integrations?company=${tenant}`,{headers});expect((await r.json()).providers[0].setup_available).toBe(false);
+});
+
+it('verifies hosted McLeod credentials and enables encrypted automatic import',async()=>{
+ vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,8).toString('base64url'));
+ const verify=vi.spyOn(McLeodClient.prototype,'verifyAccess').mockResolvedValue();
+ const credentials={host:'acme.loadtracking.com',company_id:'TMS',token:'private-token',document_type_ids:['BILL','POD']};
+ const response=await fetch(base+`/api/portal/integrations/mcleod/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify(credentials)});
+ expect(response.status).toBe(200);expect(verify).toHaveBeenCalledOnce();expect(tms.lastWrite).toMatchObject({provider:'mcleod',status:'verified',sync_enabled:true});
+ expect(decryptTmsCredentials(tenant,'mcleod',tms.lastWrite.credentials_ciphertext)).toEqual(credentials);
+});
+it('does not accept new connections when automatic processing is disabled',async()=>{
+ vi.stubEnv('WORKER_ENABLED','false');vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,8).toString('base64url'));
+ const response=await fetch(base+`/api/portal/integrations/tai/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({site:'acme',api_key:'key'})});
+ expect(response.status).toBe(503);expect(tms.writes).toHaveLength(0);
+});
+it('keeps Rose import paused when remote webhook registration fails',async()=>{
+ vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));
+ vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockResolvedValue();vi.spyOn(RoseRocketClient.prototype,'registerDocumentWebhook').mockRejectedValue(new Error('forbidden'));
+ const response=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({org_id:other,user_id:tenant,client_id:'client',client_secret:'secret'})});
+ expect(response.status).toBe(422);expect(tms.lastWrite).toMatchObject({sync_enabled:false});expect(rose.lastWrite).toMatchObject({enabled:false,connection_state:'pending'});
+ expect(mocks.rpc).not.toHaveBeenCalledWith('activate_rose_document_sync',expect.anything());
 });

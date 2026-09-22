@@ -19,8 +19,10 @@ import {failure,info,requestId} from '../observability/logger.js';
 import {PORTAL_ACCEPTANCE_TEXT,PRIVACY_VERSION,TERMS_VERSION} from '../legal/consent.js';
 import {RoseRocketClient} from '../tms/rose-rocket.js';
 import {encryptRoseCredentials,roseCredentialsReady} from '../tms/rose-rocket.credentials.js';
-import {tmsProviders,assistedProviderIds} from '../tms/catalog.js';
+import {tmsProviders} from '../tms/catalog.js';
 import {encryptTmsCredentials,tmsCredentialsReady} from '../tms/credentials.js';
+import {roseSyncToken} from '../tms/rose-sync.js';
+import {McLeodClient,McLeodCredentials} from '../tms/mcleod.js';
 import {TaiClient,TaiCredentials} from '../tms/tai.js';
 import {answerPortalSupport} from '../free-audit/support.js';
 
@@ -273,7 +275,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   }
   const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);
   if(url.pathname==='/api/portal/admin/integrations'&&req.method==='GET'){
-   const result=await serviceDb.from('audit_tms_connections').select('tenant_id,provider,status,account_label,verified_at,requested_at,updated_at,audit_tenants(name)',{count:'exact'}).order('updated_at',{ascending:false}).range(page*50,page*50+49);
+   const result=await serviceDb.from('audit_tms_connections').select('tenant_id,provider,status,account_label,verified_at,requested_at,updated_at,sync_enabled,last_synced_at,sync_error,imported_batches,audit_tenants(name)',{count:'exact'}).order('updated_at',{ascending:false}).range(page*50,page*50+49);
    if(result.error)throw result.error;
    send(200,{rows:result.data??[],total:result.count??0});return true;
   }
@@ -347,15 +349,15 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const tenantMembership=membership.data?.find(m=>m.tenant_id===tenant);
  const canManageRose=!isAdmin&&['owner','billing_admin'].includes(tenantMembership?.role??'');
  const roseTenant=tenantMembership?.audit_tenants as unknown as {status?:string}|undefined;
- const roseSetupAvailable=process.env.ROSE_ROCKET_CONNECT_ENABLED!=='false'&&roseCredentialsReady();
+ const roseSetupAvailable=process.env.WORKER_ENABLED==='true'&&process.env.ROSE_ROCKET_CONNECT_ENABLED!=='false'&&roseCredentialsReady();
  if(url.pathname==='/api/portal/integrations'&&req.method==='GET'){
-  const connections=await serviceDb.from('audit_tms_connections').select('provider,status,account_label,verified_at,requested_at').eq('tenant_id',tenant);
+  const connections=await serviceDb.from('audit_tms_connections').select('provider,status,account_label,verified_at,requested_at,sync_enabled,last_synced_at,sync_error,imported_batches').eq('tenant_id',tenant);
   if(connections.error)throw connections.error;
   send(200,{providers:tmsProviders.map(provider=>({...provider,can_manage:canManageRose,
-   setup_available:provider.id==='rose-rocket'?roseSetupAvailable:provider.id==='tai'?tmsCredentialsReady():true,
+   setup_available:provider.id==='rose-rocket'?roseSetupAvailable:['tai','mcleod'].includes(provider.id)?process.env.WORKER_ENABLED==='true'&&tmsCredentialsReady():false,
    connection:(connections.data??[]).find(row=>row.provider===provider.id)??null}))});return true;
  }
- const tmsAction=url.pathname.match(/^\/api\/portal\/integrations\/([a-z-]+)\/(connect|request|disconnect)$/);
+ const tmsAction=url.pathname.match(/^\/api\/portal\/integrations\/([a-z-]+)\/(connect|request|disconnect|enable)$/);
  if(tmsAction&&tmsAction[1]!=='rose-rocket'&&req.method==='POST'){
   const [,provider,action]=tmsAction;
   if(!tmsProviders.some(item=>item.id===provider)){send(404,{error:'Unknown TMS.'});return true;}
@@ -363,22 +365,25 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Verify your authenticator before managing TMS connections.'});return true;}
   if(action!=='disconnect'&&roseTenant?.status!=='active'){send(409,{error:'This company must be active to configure a TMS.'});return true;}
   if(!(await take({scope:'tms-setup-user',key:user.user.id,limit:10,windowSeconds:3600,failClosed:true})))return true;
+  if(action==='enable'){
+   if(process.env.WORKER_ENABLED!=='true'){send(503,{error:'Automatic document processing is not enabled on this server.'});return true;}
+   const enabled=await serviceDb.from('audit_tms_connections').update({sync_enabled:true,connection_version:crypto.randomUUID(),next_sync_at:new Date().toISOString(),sync_error:null,sync_claim:null}).eq('tenant_id',tenant).eq('provider',provider).eq('status','verified').select('provider');
+   if(enabled.error)throw enabled.error;if(!enabled.data?.length){send(409,{error:'Connect and verify this TMS first.'});return true;}
+   send(200,{status:'syncing'});return true;
+  }
   if(action==='disconnect'){
-   const stopped=await serviceDb.from('audit_tms_connections').update({status:'disconnected',credentials_ciphertext:null,verified_at:null,requested_at:null,account_label:null,updated_at:new Date().toISOString(),updated_by:user.user.id}).eq('tenant_id',tenant).eq('provider',provider);
+   const stopped=await serviceDb.from('audit_tms_connections').update({status:'disconnected',sync_enabled:false,connection_version:crypto.randomUUID(),sync_claim:null,credentials_ciphertext:null,verified_at:null,requested_at:null,account_label:null,updated_at:new Date().toISOString(),updated_by:user.user.id}).eq('tenant_id',tenant).eq('provider',provider);
    if(stopped.error)throw stopped.error;
    send(200,{status:'disconnected'});return true;
   }
   let changes;
-  if(action==='request'&&assistedProviderIds.some(id=>id===provider)){
-   z.object({}).strict().parse(await body(req));
-   changes={status:'requested',credentials_ciphertext:null,verified_at:null,account_label:null,requested_at:new Date().toISOString()};
-  }else if(action==='connect'&&provider==='tai'){
-   if(!tmsCredentialsReady()){send(503,{error:'Secure connection storage needs to be configured by Olympian. Contact support; do not send your API key.'});return true;}
-   const credentials=TaiCredentials.parse(await body(req));
-   try{await new TaiClient(credentials).verifyAccess();}
-   catch{send(422,{error:'Tai could not verify access. Check your site code, API key and Broker API permissions, then retry. No connection was changed.'});return true;}
-   changes={status:'verified',credentials_ciphertext:encryptTmsCredentials(tenant,provider,credentials),account_label:`${credentials.site}.taicloud.net`,verified_at:new Date().toISOString(),requested_at:null};
-  }else{send(409,{error:'This TMS requires assisted setup.'});return true;}
+  if(action==='connect'&&['tai','mcleod'].includes(provider)){
+   if(process.env.WORKER_ENABLED!=='true'||!tmsCredentialsReady()){send(503,{error:'Secure connection storage needs to be configured by Olympian. Contact support; do not send your API key.'});return true;}
+   const input=await body(req);const credentials=provider==='tai'?TaiCredentials.parse(input):McLeodCredentials.parse(input);
+   try{if(provider==='tai')await new TaiClient(TaiCredentials.parse(credentials)).verifyAccess();else await new McLeodClient(credentials).verifyAccess();}
+   catch{send(422,{error:'Could not verify TMS access. Check the account details and API permissions, then retry. No connection was changed.'});return true;}
+   changes={status:'verified',sync_enabled:true,connection_version:crypto.randomUUID(),sync_claim:null,sync_error:null,next_sync_at:new Date().toISOString(),credentials_ciphertext:encryptTmsCredentials(tenant,provider,credentials),account_label:provider==='tai'?`${TaiCredentials.parse(credentials).site}.taicloud.net`:McLeodCredentials.parse(credentials).host,verified_at:new Date().toISOString(),requested_at:null};
+  }else{send(409,{error:'This connector is not available. Vendor API access is required before it can be offered.'});return true;}
   const saved=await serviceDb.from('audit_tms_connections').upsert({tenant_id:tenant,provider,...changes,updated_at:new Date().toISOString(),updated_by:user.user.id},{onConflict:'tenant_id,provider'});
   if(saved.error)throw saved.error;
   info('tms.connection.updated',{tenant_id:tenant,provider,status:changes.status,actor_user_id:user.user.id});
@@ -440,14 +445,22 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
    ?await serviceDb.from('audit_rose_connections').update(changes).eq('tenant_id',tenant).eq('org_id',input.org_id)
    :await serviceDb.from('audit_rose_connections').insert({org_id:input.org_id,tenant_id:tenant,...changes});
   if(saved.error){send(saved.error.code==='23505'?409:503,{error:saved.error.code==='23505'?'This Rose Rocket organization is already linked to another company.':'Could not save the connection. Try again.'});return true;}
+  // Register the official order-status webhook before turning on document intake.
+  const connectionVersion=crypto.randomUUID();
+  const syncSaved=await serviceDb.from('audit_tms_connections').upsert({tenant_id:tenant,provider:'rose-rocket',status:'verified',credentials_ciphertext:changes.credentials_ciphertext,account_label:input.org_id,verified_at:changes.connected_at,sync_enabled:false,connection_version:connectionVersion,sync_claim:null,sync_error:null,next_sync_at:new Date().toISOString()},{onConflict:'tenant_id,provider'});
+  if(syncSaved.error)throw syncSaved.error;
+  try{await new RoseRocketClient({account}).registerDocumentWebhook(new URL(`/webhooks/rose-sync/${input.org_id}/${roseSyncToken(input.org_id)}`,origin).href);}
+  catch{send(422,{error:'API access worked, but Rose Rocket could not enable automatic document delivery. Check webhook permissions and reconnect.'});return true;}
+  const activated=await serviceDb.rpc('activate_rose_document_sync',{p_tenant:tenant,p_version:connectionVersion});
+  if(activated.error)throw activated.error;
   info('rose.connection.verified',{tenant_id:tenant,org_id:input.org_id,actor_user_id:user.user.id});
-  send(200,{status:'pending',org_id:input.org_id});return true;
+  send(200,{status:'active',org_id:input.org_id});return true;
  }
  if(url.pathname==='/api/portal/integrations/rose-rocket/disconnect'&&req.method==='POST'){
   if(!canManageRose){send(403,{error:'Only the company owner or billing administrator can disconnect Rose Rocket.'});return true;}
   if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Verify your authenticator before disconnecting Rose Rocket.'});return true;}
   if(!(await take({scope:'rose-disconnect-user',key:user.user.id,limit:5,windowSeconds:3600,failClosed:true})))return true;
-  const stopped=await serviceDb.from('audit_rose_connections').update({credentials_ciphertext:null,connected_at:null,connected_by:null,connection_state:'disconnected',enabled:false}).eq('tenant_id',tenant);
+  const stopped=await serviceDb.rpc('disconnect_rose_document_sync',{p_tenant:tenant});
   if(stopped.error)throw stopped.error;
   info('rose.connection.disconnected',{tenant_id:tenant,actor_user_id:user.user.id});
   send(200,{status:'disconnected'});return true;
@@ -537,7 +550,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   if(error){send(409,{error:'Unable to save this outcome. Please refresh and try again.'});return true;}
   send(200,{ok:true});return true;
  }
- const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,verification,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at,resolution_status,avoided_amount,resolution_note,resolved_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
+ const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,source,tms_provider,tms_record_id,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,verification,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at,resolution_status,avoided_amount,resolution_note,resolved_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
  const table=tables[url.pathname.split('/').pop()??''];
  if(table&&req.method==='GET'){
  const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);

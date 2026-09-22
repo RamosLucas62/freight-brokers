@@ -16,9 +16,10 @@ import {OpenRouterPodExtractor} from '../pod/openrouter.extractor.js';
 import {PodExtractionSchema} from '../pod/schema.js';
 import {OpenRouterRateConfirmationExtractor} from '../rate-confirmation/openrouter.extractor.js';
 import {RateConfirmationExtractionSchema} from '../rate-confirmation/schema.js';
+import {TmsReceivingClient} from '../tms/sync.js';
 import {inboundFailureDecision} from './failure-policy.js';
 
-export async function processJob(job:repository.InboundJob,client:ResendReceivingClient) {
+export async function processJob(job:repository.InboundJob,client:ResendReceivingClient|TmsReceivingClient) {
  let dir:string|undefined;
  let stage='saved_report_lookup';const started=Date.now();info('inbound.worker.started',{job_id:job.id,tenant_id:job.tenant_id,email_id:job.email_id});
  try {
@@ -27,11 +28,17 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   stage='account_check';
   const store=createAuditStore(job.tenant_id);
   try{await store.assertActive();}catch(error){warn('inbound.worker.blocked',{job_id:job.id,tenant_id:job.tenant_id,stage,reason:'ACCOUNT_UNAVAILABLE'});await repository.finish(job,'blocked',null,'ACCOUNT_UNAVAILABLE');return;}
+  if(job.source==='tms'){
+   if(!(client instanceof TmsReceivingClient))throw new Error('TMS_SOURCE_MISMATCH');
+   stage='tms_authorization';await client.authorize();
+  }else{
+  if(client instanceof TmsReceivingClient)throw new Error('TMS_SOURCE_MISMATCH');
   stage='resend_metadata';
   const metadata=typeof (client as {metadata?:unknown}).metadata==='function'?await client.metadata(job.email_id):{automatic:await client.isAutomatic(job.email_id),from:'unknown@invalid.local',authenticated:true};
   if(metadata.automatic){info('inbound.worker.ignored',{job_id:job.id,tenant_id:job.tenant_id,reason:'AUTOMATIC_EMAIL'});await repository.finish(job,'ignored',null,'AUTOMATIC_EMAIL');return;}
   if(!metadata.authenticated){warn('inbound.worker.blocked',{job_id:job.id,tenant_id:job.tenant_id,reason:'SENDER_AUTHENTICATION_FAILED'});await repository.finish(job,'blocked',null,'SENDER_AUTHENTICATION_FAILED');return;}
   if(metadata.from!=='unknown@invalid.local')try{stage='sender_authorization';await repository.authorizeInbound(job,metadata.from);}catch{warn('inbound.worker.blocked',{job_id:job.id,tenant_id:job.tenant_id,reason:'SENDER_NOT_AUTHORIZED_OR_QUOTA'});await repository.finish(job,'blocked',null,'SENDER_NOT_AUTHORIZED_OR_QUOTA');return;}
+  }
   stage='list_attachments';
   const attachments=await client.attachments(job.email_id);
   const pdfs=attachments.filter(a=>a.content_type==='application/pdf' || a.filename?.toLowerCase().endsWith('.pdf'));
@@ -47,7 +54,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    stage='store_attachment';await repository.saveAttachment(job,attachment.id,attachment.filename??'invoice.pdf',bytes);
    hashes.set(attachment.id,createHash('sha256').update(bytes).digest('hex'));
    const path=join(dir,`${attachment.id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);
-   labels[path]=`resend/${job.email_id}/${attachment.id}.pdf`;
+   labels[path]=job.source==='tms'?`tms/${job.tms_provider}/${job.tms_record_id}/${attachment.id}.pdf`:`resend/${job.email_id}/${attachment.id}.pdf`;
   }
   stage='load_extraction_cache';const cached=await repository.storedDocuments(job);const classifier=new OpenRouterDocumentClassifier();
   const costContext={tenantId:job.tenant_id,subjectType:'audit_run' as const,subjectId:job.id};
@@ -58,6 +65,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    if(documentType==='pod'){stage='extract_pod';const result=stored?.extraction?PodExtractionSchema.parse(stored.extraction):await new OpenRouterPodExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'pod',result);pods.push(result);continue;}
    stage='extract_rate_confirmation';const result=stored?.extraction?RateConfirmationExtractionSchema.parse(stored.extraction):await new OpenRouterRateConfirmationExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'rate_confirmation',result);rateConfirmations.push(result);
   }
+  if(client instanceof TmsReceivingClient)await client.authorize();
   stage='audit_pipeline';
   const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:invoicePaths,sourceLabels:labels,pods,rateConfirmations,reconcileSupportingDocuments:true,
    costContext,
@@ -80,6 +88,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   const status=typeof error==='object' && error!==null && '$metadata' in error
    ? (error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode
    : undefined;
+  if(job.source==='tms'&&detail==='TMS_CONNECTION_INACTIVE'){await repository.finish(job,'blocked',null,'TMS_CONNECTION_INACTIVE');return;}
   const decision=inboundFailureDecision(error,stage,job.attempts??1);
   failure('inbound.worker.failed',error,{job_id:job.id,tenant_id:job.tenant_id,stage,attempt:decision.attempt,retry_scheduled:decision.retry,provider_detail:/^[A-Z0-9_]{3,100}$/.test(detail)?detail:'PROVIDER_ERROR',upstream_status:status,duration_ms:Date.now()-started});
   if(decision.retry){
@@ -91,7 +100,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
 export function startWorker(client:ResendReceivingClient) {
  let stopping=false;let running:Promise<void>|null=null;
  const tick=()=>{if(stopping||running)return;running=(async()=>{
-  try{const job=await repository.claim();if(job)await processJob(job,client);}
+  try{const job=await repository.claim();if(job)await processJob(job,job.source==='tms'?new TmsReceivingClient(job):client);}
   catch(error){failure('inbound.worker.tick_failed',error,{action:'claim_or_update_queue'});}
  })().finally(()=>{running=null;});};
  const timer=setInterval(tick,3000);tick();

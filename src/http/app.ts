@@ -10,6 +10,8 @@ import {HttpError,readBody,securityHeaders} from '../security/http.js';
 import {increment,metricsAuthorized,renderMetrics} from '../observability/metrics.js';
 import {beginRequest,failure,info,requestId,warn} from '../observability/logger.js';
 import {RoseWebhookEvent,type RoseWebhookEvent as RoseEvent} from '../tms/rose-rocket.js';
+import {roseSyncToken} from '../tms/rose-sync.js';
+import {enqueueRoseEvent} from '../tms/rose-rocket.repository.js';
 import type {RoseEnqueueResult} from '../tms/rose-rocket.repository.js';
 export interface HttpDependencies {
  secret:string;
@@ -32,7 +34,7 @@ export function createApp(deps:HttpDependencies) {
   const traceId=beginRequest(req);const started=Date.now();
   res.setHeader('X-Request-Id',traceId);
   res.once('finish',()=>{const path=new URL(req.url??'/','http://local').pathname;
-   info('http.request.completed',{request_id:traceId,method:req.method,path:path.startsWith('/webhooks/rose-rocket/')?'/webhooks/rose-rocket/[redacted]':path,status_code:res.statusCode,duration_ms:Date.now()-started});});
+   info('http.request.completed',{request_id:traceId,method:req.method,path:(path.startsWith('/webhooks/rose-rocket/')||path.startsWith('/webhooks/rose-sync/'))?'/webhooks/rose-rocket/[redacted]':path,status_code:res.statusCode,duration_ms:Date.now()-started});});
   securityHeaders(res);
   if(req.method==='GET'&&req.url==='/internal/metrics'){
    if(!metricsAuthorized(typeof req.headers.authorization==='string'?req.headers.authorization:undefined)){res.writeHead(404);res.end();return;}
@@ -40,6 +42,21 @@ export function createApp(deps:HttpDependencies) {
   }
   const respond=(code:number,body:unknown)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
   const ip=clientIp(req.headers,req.socket.remoteAddress);
+  const roseSyncPath=new URL(req.url??'/','http://local').pathname;
+  if(roseSyncPath.startsWith('/webhooks/rose-sync/')){
+   const match=roseSyncPath.match(/^\/webhooks\/rose-sync\/([0-9a-f-]{36})\/([A-Za-z0-9_-]{43})$/);
+   if(req.method!=='POST'){respond(405,{error:'method_not_allowed'});req.resume();return;}
+   const rate=await limiter.consume({scope:'rose-sync-webhook',key:ip,limit:120,windowSeconds:60,failClosed:true});
+   if(!rate.allowed){respond(429,{error:'too_many_requests'});req.resume();return;}
+   if(!match||!process.env.ROSE_ROCKET_CREDENTIAL_KEY||!equalWebhookToken(match[2],roseSyncToken(match[1]))){respond(401,{error:'unauthorized'});req.resume();return;}
+   if(req.headers['content-type']?.split(';',1)[0].trim()!=='application/json'){respond(415,{error:'json_required'});req.resume();return;}
+   try{
+    const event=RoseWebhookEvent.safeParse(JSON.parse((await readBody(req,64*1024)).toString('utf8')));
+    if(!event.success){respond(400,{error:'invalid_event'});return;}
+    if(event.data.orgId!==match[1]||event.data.objectKey!=='order'){respond(202,{status:'ignored'});return;}
+    const result=await enqueueRoseEvent(event.data);respond(result==='rate_limited'?429:202,{status:result});
+   }catch(error){respond(error instanceof HttpError?error.status:error instanceof SyntaxError?400:503,{error:error instanceof SyntaxError?'invalid_event':'temporarily_unavailable'});}return;
+  }
   if(new URL(req.url??'/','http://local').pathname.startsWith('/webhooks/rose-rocket/')){
    const path=new URL(req.url??'/','http://local').pathname;
    if(!deps.roseWebhook){respond(404,{error:'not_found'});req.resume();return;}

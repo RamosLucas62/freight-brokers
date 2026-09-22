@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {readJson,readPdf} from './documents.js';
 
 const ObjectKey=z.enum(['order','manifest','bill','invoice']);
 export type RoseObjectKey=z.infer<typeof ObjectKey>;
@@ -94,8 +95,25 @@ export class RoseRocketClient {
   if(object.orgId!==this.orgId||object.id!==id||object.objectKey!==key)throw new Error('ROSE_OBJECT_SCOPE_MISMATCH');
   return object;
  }
+ async registerDocumentWebhook(url:string):Promise<void>{
+  const response=await this.fetcher(`${this.apiOrigin}/api/v2/platformModel/objects`,{
+   method:'POST',redirect:'error',headers:{Authorization:`Bearer ${await this.accessToken()}`,'Content-Type':'application/json'},
+   body:JSON.stringify({objectKey:'webhookDestination',json:{name:'Olympian automatic document audit',url,subscriptions:[{objectKey:'webhookSubscription',eventName:'Order Status Changed'}]}}),signal:AbortSignal.timeout(20_000),
+  });
+  if(!response.ok){await response.body?.cancel();throw new Error(`ROSE_WEBHOOK_HTTP_${response.status}`);}await response.body?.cancel();
+ }
  async downloadPdf(document:RoseDocument):Promise<Buffer>{
   const parsed=Document.parse(document);
+  if(parsed.file?.id){
+   const info=z.object({presignedUrl:z.string().url()}).parse(await readJson(await this.request(`/api/v2/platformModel/file/url?fileId=${pathId(parsed.file.id)}`)));
+   const url=new URL(info.presignedUrl);
+   // Presigned storage links never receive API authorization. Deployments must
+   // configure the exact storage hosts returned by their Rose account.
+   const hosts=(process.env.ROSE_ROCKET_DOCUMENT_HOSTS??'').split(',').map(host=>host.trim()).filter(Boolean);
+   const storageHost=/^[a-z0-9.-]+\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/.test(url.hostname)||url.hostname==='storage.googleapis.com';
+   if(url.protocol!=='https:'||(!storageHost&&!hosts.includes(url.hostname))||url.port||url.username||url.password||url.hash)throw new Error('ROSE_DOCUMENT_HOST_NOT_CONFIGURED');
+   return readPdf(await this.fetcher(url,{redirect:'error',signal:AbortSignal.timeout(30_000)}));
+  }
   // External URLs can be presigned third-party links. Until a real tenant validates
   // their host/redirect behavior, only same-origin Platform document paths are read.
   const path=parsed.externalUrl;

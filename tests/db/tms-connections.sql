@@ -13,7 +13,7 @@ DO $$ BEGIN
   RAISE EXCEPTION 'Verified state accepted without credentials';
  EXCEPTION WHEN check_violation THEN NULL; END;
  BEGIN
-  INSERT INTO public.audit_tms_connections(tenant_id,provider,status,credentials_ciphertext,verified_at) VALUES ('81000000-0000-4000-8000-000000000002','mcleod','verified','secret',now());
+  INSERT INTO public.audit_tms_connections(tenant_id,provider,status,credentials_ciphertext,verified_at) VALUES ('81000000-0000-4000-8000-000000000002','mercurygate','verified','secret',now());
   RAISE EXCEPTION 'Assisted provider marked verified';
  EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;

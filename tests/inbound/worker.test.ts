@@ -57,3 +57,19 @@ describe('inbound worker',()=>{
   client.attachments.mockResolvedValue([]);await processJob(job,client);expect(repo.finish).toHaveBeenCalledWith(job,'ignored',null,'NO_PDF_ATTACHMENTS');
  });
 });
+
+it('processes a TMS document through storage and audit without any email calls',async()=>{
+ const {TmsReceivingClient}=await import('../../src/tms/sync.js');const tmsJob={...job,source:'tms',tms_provider:'tai',tms_record_id:'123'};
+ const source=new TmsReceivingClient(tmsJob);const authorize=vi.spyOn(source,'authorize').mockResolvedValue();
+ const metadata=vi.spyOn(source,'metadata');vi.spyOn(source,'attachments').mockResolvedValue([{id:job.id,filename:'carrier.pdf',size:12,content_type:'application/pdf',download_url:'https://unused.invalid'}]);vi.spyOn(source,'download').mockResolvedValue(Buffer.from('%PDF-test'));
+ await processJob(tmsJob,source);expect(metadata).not.toHaveBeenCalled();expect(authorize).toHaveBeenCalledTimes(2);expect(repo.saveAttachment).toHaveBeenCalledOnce();
+ const options=vi.mocked(runAuditPipeline).mock.calls[0][0];expect(options.tenantId).toBe(job.tenant_id);expect(Object.values(options.sourceLabels!)[0]).toContain('tms/tai/123/');expect(repo.finish).toHaveBeenCalledWith(tmsJob,'completed',expect.anything(),null);
+});
+it('blocks a disconnected TMS source before downloading',async()=>{
+ const {TmsReceivingClient}=await import('../../src/tms/sync.js');const tmsJob={...job,source:'tms',tms_provider:'tai'};const source=new TmsReceivingClient(tmsJob);
+ vi.spyOn(source,'authorize').mockRejectedValue(new Error('TMS_CONNECTION_INACTIVE'));const attachments=vi.spyOn(source,'attachments');await processJob(tmsJob,source);
+ expect(attachments).not.toHaveBeenCalled();expect(runAuditPipeline).not.toHaveBeenCalled();expect(repo.finish).toHaveBeenCalledWith(tmsJob,'blocked',null,'TMS_CONNECTION_INACTIVE');
+});
+it('cannot route an email job through a TMS source to bypass sender authorization',async()=>{
+ const {TmsReceivingClient}=await import('../../src/tms/sync.js');const source=new TmsReceivingClient(job);const attachments=vi.spyOn(source,'attachments');await processJob(job,source);expect(attachments).not.toHaveBeenCalled();expect(runAuditPipeline).not.toHaveBeenCalled();
+});
