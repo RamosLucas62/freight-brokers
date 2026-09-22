@@ -26,8 +26,13 @@ Credential setup is not a consent-only OAuth flow. Missing permissions fail setu
 or produce a visible synchronization error; they cannot be provisioned by this app.
 Existing verified Tai accounts remain paused until the owner selects **Enable
 automatic import**. Existing Rose accounts reconnect to register the new webhook.
-Email is optional for evidence outside these scopes, not a requirement for importing
-supported documents. Only PDFs are processed; other formats fail validation.
+An active verified TMS connection disables email document intake for the whole
+company. Outgoing report emails remain enabled. Customers must disconnect every
+active TMS connection to use email for documents outside the supported scope.
+Temporary sync errors do not reopen email. New emails are recorded as blocked;
+already queued emails are checked before downloading and before auditing. Work
+already committed is retained. The first-login guide offers TMS selection and
+routes unsupported/no-TMS customers to the private email address and sender setup. Only PDFs are processed; other formats fail validation.
 
 ## Provider research (2026-09-22)
 
@@ -69,7 +74,7 @@ unknown endpoints, document semantics, pagination or webhook authentication.
 
 ## Deployment and operation
 
-1. Apply migrations through `039_tms_automatic_documents.sql` using the normal
+1. Apply migrations through `040_exclusive_document_intake.sql` using the normal
    migration process. The isolated database test does not modify production.
 2. Configure `ROSE_ROCKET_CREDENTIAL_KEY` and `TMS_CREDENTIAL_KEY` as separate,
    stable 32-byte base64url encryption keys in the deployment secret store. Keep

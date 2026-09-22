@@ -1,6 +1,6 @@
 import {describe,it,expect,vi,beforeEach} from 'vitest';
 const documentMocks=vi.hoisted(()=>({classify:vi.fn(),extractPod:vi.fn(),extractRate:vi.fn()}));
-vi.mock('../../src/inbound/repository.js',()=>({savedReport:vi.fn(),finish:vi.fn(),scheduleRetry:vi.fn(),saveAttachment:vi.fn(),storedDocuments:vi.fn(),setDocumentType:vi.fn(),cacheExtraction:vi.fn(),cacheSupportingExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
+vi.mock('../../src/inbound/repository.js',()=>({assertEmailIntakeEnabled:vi.fn(),savedReport:vi.fn(),finish:vi.fn(),scheduleRetry:vi.fn(),saveAttachment:vi.fn(),storedDocuments:vi.fn(),setDocumentType:vi.fn(),cacheExtraction:vi.fn(),cacheSupportingExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
 vi.mock('../../src/db/audit.repo.js',()=>({createAuditStore:vi.fn()}));
 vi.mock('../../src/pipeline/audit.pipeline.js',()=>({runAuditPipeline:vi.fn()}));
 vi.mock('../../src/extraction/index.js',()=>({extractor:{extract:vi.fn()}}));
@@ -72,4 +72,13 @@ it('blocks a disconnected TMS source before downloading',async()=>{
 });
 it('cannot route an email job through a TMS source to bypass sender authorization',async()=>{
  const {TmsReceivingClient}=await import('../../src/tms/sync.js');const source=new TmsReceivingClient(job);const attachments=vi.spyOn(source,'attachments');await processJob(job,source);expect(attachments).not.toHaveBeenCalled();expect(runAuditPipeline).not.toHaveBeenCalled();
+});
+
+it('blocks queued email before provider access when a TMS is active',async()=>{
+ vi.mocked(repo.assertEmailIntakeEnabled).mockRejectedValue(new Error('EMAIL_INTAKE_DISABLED_TMS'));
+ await processJob(job,client);expect(client.isAutomatic).not.toHaveBeenCalled();expect(client.attachments).not.toHaveBeenCalled();expect(runAuditPipeline).not.toHaveBeenCalled();expect(repo.finish).toHaveBeenCalledWith(job,'blocked',null,'EMAIL_INTAKE_DISABLED_TMS');
+});
+it('stops an email when TMS activation occurs during attachment discovery',async()=>{
+ vi.mocked(repo.assertEmailIntakeEnabled).mockResolvedValueOnce().mockRejectedValue(new Error('EMAIL_INTAKE_DISABLED_TMS'));
+ await processJob(job,client);expect(client.attachments).toHaveBeenCalledOnce();expect(client.download).not.toHaveBeenCalled();expect(runAuditPipeline).not.toHaveBeenCalled();
 });

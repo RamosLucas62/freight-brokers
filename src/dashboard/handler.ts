@@ -467,21 +467,22 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  }
  if(url.pathname==='/api/portal/settings'&&req.method==='GET'){
   const monthStart=new Date();monthStart.setUTCDate(1);monthStart.setUTCHours(0,0,0,0);
-  const [settings,contacts,billing,senders,usage,roseConnection]=await Promise.all([
+  const [settings,contacts,billing,senders,usage,roseConnection,emailIntake]=await Promise.all([
    db.from('audit_notification_settings').select('timezone,daily_hour,daily_enabled,monthly_enabled,immediate_enabled,immediate_threshold').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_report_contacts').select('email,verified_at').eq('tenant_id',tenant).eq('enabled',true).order('email'),
    db.from('audit_billing_customers').select('billing_email,stripe_subscription_id,status,trial_ends_at,retention_discount_used_at,pause_used_at,paused_until,cancel_at_period_end,canceled_at,deletion_scheduled_at,plan_code,billing_period,included_invoices,overage_unit_amount_cents,payment_grace_until').eq('tenant_id',tenant).maybeSingle(),
    db.from('audit_inbound_sender_rules').select('sender_email').eq('tenant_id',tenant).eq('enabled',true).order('sender_email'),
    db.from('audit_invoice_usage').select('id',{count:'exact',head:true}).eq('tenant_id',tenant).gte('created_at',monthStart.toISOString()),
    serviceDb.from('audit_rose_connections').select('org_id,enabled,connection_state,connected_at').eq('tenant_id',tenant).maybeSingle(),
+   serviceDb.rpc('email_intake_enabled',{p_tenant:tenant}),
   ]);
-  if(settings.error||contacts.error||billing.error||senders.error||usage.error||roseConnection.error)throw new Error('Settings lookup failed');
+  if(settings.error||contacts.error||billing.error||senders.error||usage.error||roseConnection.error||emailIntake.error)throw new Error('Settings lookup failed');
   // Billing state is synchronized by Stripe webhooks. Reading Settings must stay
   // a local portal query and should not wait on a live Stripe API call.
   const bill=billing.data;
   const tenantRole=membership.data?.find(m=>m.tenant_id===tenant)?.role;
   const tenantDetails=membership.data?.find(m=>m.tenant_id===tenant)?.audit_tenants as {alias?:string}|undefined;const plan=plans[planFromMetadata(bill?.plan_code)];
-  send(200,{notifications:{timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),audit_email:tenantDetails?.alias?`${tenantDetails.alias}@audit.aiolympian.com`:null,max_recipients:plan.maxRecipients,max_senders:plan.maxSenders,report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
+  send(200,{notifications:{email_intake_enabled:emailIntake.data===true,timezone:settings.data?.timezone??'UTC',daily_hour:settings.data?.daily_hour??7,can_manage:['owner','billing_admin'].includes(tenantRole??''),audit_email:tenantDetails?.alias?`${tenantDetails.alias}@audit.aiolympian.com`:null,max_recipients:plan.maxRecipients,max_senders:plan.maxSenders,report_emails:(contacts.data??[]).map(row=>({email:row.email,verified:Boolean(row.verified_at)})),inbound_senders:(senders.data??[]).map(row=>row.sender_email)},
    integrations:{rose_rocket:{setup_available:roseSetupAvailable,can_manage:canManageRose,status:roseConnection.data?.enabled?'active':roseConnection.data?.connection_state==='pending'&&roseConnection.data?.connected_at?'pending':'disconnected',org_id:roseConnection.data?.org_id??null,connected_at:roseConnection.data?.connected_at??null}},
    billing:bill?{status:bill.status,trial_ends_at:bill.trial_ends_at,paused_until:bill.paused_until,payment_grace_until:bill.payment_grace_until,cancel_at_period_end:bill.cancel_at_period_end,canceled_at:bill.canceled_at,
     plan_code:bill.plan_code,billing_period:bill.billing_period,included_invoices:bill.included_invoices,overage_unit_amount_cents:bill.overage_unit_amount_cents,usage_count:usage.count??0,

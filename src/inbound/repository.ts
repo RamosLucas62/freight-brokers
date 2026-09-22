@@ -5,6 +5,11 @@ import { recipientAliases, type ReceivedEvent } from './events.js';
 import {invoiceObjectKey,putInvoiceObject} from '../storage/r2.js';
 import type {DocumentType} from '../documents/classifier.js';
 export interface InboundJob { id:string; tenant_id:string; email_id:string; attempts?:number; source?:string; tms_provider?:string; tms_connection_version?:string; tms_record_id?:string; tms_documents?:unknown; }
+export async function assertEmailIntakeEnabled(tenantId:string):Promise<void>{
+ const {data,error}=await getSupabaseClient().rpc('email_intake_enabled',{p_tenant:tenantId});
+ if(error)throw new Error('INTAKE_STATUS_UNAVAILABLE');
+ if(data!==true)throw new Error('EMAIL_INTAKE_DISABLED_TMS');
+}
 export async function authorizeInbound(job:InboundJob,sender:string):Promise<void>{
  const {data,error}=await getSupabaseClient().rpc('authorize_inbound_processing',{p_tenant:job.tenant_id,p_sender:sender});
  if(error||!data)throw new Error('UNAUTHORIZED_OR_QUOTA_EXCEEDED');

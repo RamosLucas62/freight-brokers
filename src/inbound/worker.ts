@@ -33,6 +33,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    stage='tms_authorization';await client.authorize();
   }else{
   if(client instanceof TmsReceivingClient)throw new Error('TMS_SOURCE_MISMATCH');
+  stage='email_intake_check';await repository.assertEmailIntakeEnabled(job.tenant_id);
   stage='resend_metadata';
   const metadata=typeof (client as {metadata?:unknown}).metadata==='function'?await client.metadata(job.email_id):{automatic:await client.isAutomatic(job.email_id),from:'unknown@invalid.local',authenticated:true};
   if(metadata.automatic){info('inbound.worker.ignored',{job_id:job.id,tenant_id:job.tenant_id,reason:'AUTOMATIC_EMAIL'});await repository.finish(job,'ignored',null,'AUTOMATIC_EMAIL');return;}
@@ -48,6 +49,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   const paths:string[]=[];const labels:Record<string,string>={};const hashes=new Map<string,string>();let bytesTotal=0;
   // Download and persist every PDF before any paid extraction.
   for(const attachment of pdfs){
+   if(job.source!=='tms')await repository.assertEmailIntakeEnabled(job.tenant_id);
    stage='download_attachment';const bytes=await client.download(attachment);bytesTotal+=bytes.length;
    if(bytesTotal>40*1024*1024)throw new Error('MESSAGE_TOO_LARGE');
    stage='scan_pdf';await scanPdf(bytes);
@@ -56,6 +58,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    const path=join(dir,`${attachment.id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);
    labels[path]=job.source==='tms'?`tms/${job.tms_provider}/${job.tms_record_id}/${attachment.id}.pdf`:`resend/${job.email_id}/${attachment.id}.pdf`;
   }
+  if(job.source!=='tms')await repository.assertEmailIntakeEnabled(job.tenant_id);
   stage='load_extraction_cache';const cached=await repository.storedDocuments(job);const classifier=new OpenRouterDocumentClassifier();
   const costContext={tenantId:job.tenant_id,subjectType:'audit_run' as const,subjectId:job.id};
   const invoicePaths:string[]=[];const pods=[];const rateConfirmations=[];
@@ -66,6 +69,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    stage='extract_rate_confirmation';const result=stored?.extraction?RateConfirmationExtractionSchema.parse(stored.extraction):await new OpenRouterRateConfirmationExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'rate_confirmation',result);rateConfirmations.push(result);
   }
   if(client instanceof TmsReceivingClient)await client.authorize();
+  else await repository.assertEmailIntakeEnabled(job.tenant_id);
   stage='audit_pipeline';
   const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:invoicePaths,sourceLabels:labels,pods,rateConfirmations,reconcileSupportingDocuments:true,
    costContext,
@@ -88,6 +92,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   const status=typeof error==='object' && error!==null && '$metadata' in error
    ? (error as {$metadata?:{httpStatusCode?:number}}).$metadata?.httpStatusCode
    : undefined;
+  if(detail==='EMAIL_INTAKE_DISABLED_TMS'){await repository.finish(job,'blocked',null,detail);return;}
   if(job.source==='tms'&&detail==='TMS_CONNECTION_INACTIVE'){await repository.finish(job,'blocked',null,'TMS_CONNECTION_INACTIVE');return;}
   const decision=inboundFailureDecision(error,stage,job.attempts??1);
   failure('inbound.worker.failed',error,{job_id:job.id,tenant_id:job.tenant_id,stage,attempt:decision.attempt,retry_scheduled:decision.retry,provider_detail:/^[A-Z0-9_]{3,100}$/.test(detail)?detail:'PROVIDER_ERROR',upstream_status:status,duration_ms:Date.now()-started});
