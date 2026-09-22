@@ -14,6 +14,8 @@ import type {RateConfirmationExtractionResult} from '../rate-confirmation/types.
 import {reconcileDocuments} from '../reconciliation/reconcile.js';
 import {confidenceSummary,verifyInvoice} from '../confidence/engine.js';
 import {info} from '../observability/logger.js';
+import type {CostContext} from '../costs/telemetry.js';
+import {reviewAuditWithJev} from '../jev/audit-reviewer.js';
 
 export interface PipelineOptions {
   tenantId: string;
@@ -28,6 +30,8 @@ export interface PipelineOptions {
   pods?:PodExtractionResult[];
   rateConfirmations?:RateConfirmationExtractionResult[];
   reconcileSupportingDocuments?:boolean;
+  costContext?:CostContext;
+  jevReview?:typeof reviewAuditWithJev;
 }
 
 export async function runAuditPipeline(options: PipelineOptions): Promise<AuditReport> {
@@ -44,7 +48,7 @@ export async function runAuditPipeline(options: PipelineOptions): Promise<AuditR
     const hash = createHash('sha256').update(bytes).digest('hex');
     if (known.has(hash)) { skipped.push(options.sourceLabels?.[file] ?? file); continue; }
     await store.assertActive();
-    const result = await extractor.extract(file);
+    const result = await extractor.extract(file,options.costContext);
     // Detect modification during extraction before attaching a content identity.
     if (createHash('sha256').update(await readFile(file)).digest('hex') !== hash) throw new Error(`File changed during extraction: ${file}`);
     const fields = normalizeFields(result.fields);
@@ -76,6 +80,8 @@ export async function runAuditPipeline(options: PipelineOptions): Promise<AuditR
    ?reconcileDocuments(invoices,options.pods??[],options.rateConfirmations??[],Number(process.env.SUPPORTING_DOCUMENT_CONFIDENCE_THRESHOLD??0.9))
    :{exceptions:[],summary:{matched:0,divergent:0,unverifiable:0,unbilled_revenue:0,supporting_documents:0},warnings:[]};
   exceptions.push(...reconciliation.exceptions);
+  const jevReview=options.jevReview??(process.env.JEV_ENABLED==='true'?reviewAuditWithJev:undefined);
+  if(jevReview)exceptions.push(...await jevReview(invoices,exceptions,options.costContext));
   const report = buildReport(invoices, exceptions, ctx);
   report.confidence=confidenceSummary(invoices);
   info('audit.confidence.measured',{tenant_id:tenantId,run_id:ctx.run_id,invoices:invoices.length,...report.confidence});

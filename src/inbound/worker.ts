@@ -50,21 +50,23 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
    labels[path]=`resend/${job.email_id}/${attachment.id}.pdf`;
   }
   stage='load_extraction_cache';const cached=await repository.storedDocuments(job);const classifier=new OpenRouterDocumentClassifier();
+  const costContext={tenantId:job.tenant_id,subjectType:'audit_run' as const,subjectId:job.id};
   const invoicePaths:string[]=[];const pods=[];const rateConfirmations=[];
   for(const path of paths){const id=basename(path,'.pdf');const attachment=pdfs.find(item=>item.id===id)!;const stored=cached.get(id);let documentType:DocumentType;
-   if(stored)documentType=stored.documentType;else{stage='classify_document';documentType=await classifier.classify(path,attachment.filename??'');await repository.setDocumentType(job,id,documentType);}
+   if(stored)documentType=stored.documentType;else{stage='classify_document';documentType=await classifier.classify(path,attachment.filename??'',costContext);await repository.setDocumentType(job,id,documentType);}
    if(documentType==='invoice'){invoicePaths.push(path);continue;}
-   if(documentType==='pod'){stage='extract_pod';const result=stored?.extraction?PodExtractionSchema.parse(stored.extraction):await new OpenRouterPodExtractor().extract(path);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'pod',result);pods.push(result);continue;}
-   stage='extract_rate_confirmation';const result=stored?.extraction?RateConfirmationExtractionSchema.parse(stored.extraction):await new OpenRouterRateConfirmationExtractor().extract(path);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'rate_confirmation',result);rateConfirmations.push(result);
+   if(documentType==='pod'){stage='extract_pod';const result=stored?.extraction?PodExtractionSchema.parse(stored.extraction):await new OpenRouterPodExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'pod',result);pods.push(result);continue;}
+   stage='extract_rate_confirmation';const result=stored?.extraction?RateConfirmationExtractionSchema.parse(stored.extraction):await new OpenRouterRateConfirmationExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'rate_confirmation',result);rateConfirmations.push(result);
   }
   stage='audit_pipeline';
   const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:invoicePaths,sourceLabels:labels,pods,rateConfirmations,reconcileSupportingDocuments:true,
+   costContext,
    ctx:{run_id:job.id,carrierCache:new Map(),cacheTtlHours:Number(process.env.CARRIER_CACHE_TTL_HOURS??4)},
-   getCarrier,store,extractor:{async extract(path){
+   getCarrier,store,extractor:{async extract(path,context){
     const id=basename(path,'.pdf');
     const stored=cached.get(id)?.extraction;
     if(stored){const parsed=ExtractionResultSchema.parse(stored);await repository.recordBillableInvoice(job,id,hashes.get(id)!);return parsed;}
-    const result=await extractor.extract(path);
+    const result=await extractor.extract(path,context);
     await repository.cacheExtraction(job,id,result);
     await repository.recordBillableInvoice(job,id,hashes.get(id)!);
     return result;

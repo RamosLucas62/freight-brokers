@@ -1,11 +1,13 @@
 import {z} from 'zod';
 import {HttpError,readResponseBody} from '../security/http.js';
+import {OpenRouterUsageSchema,recordOpenRouterUsage,type CostContext} from '../costs/telemetry.js';
+import {routeSupportWithJev} from '../jev/support-router.js';
 
 const MODEL='openai/gpt-4.1-mini';
 const Message=z.object({role:z.enum(['user','assistant']),content:z.string().trim().min(1).max(1200)}).strict();
 const Input=z.object({messages:z.array(Message).min(1).max(24)}).strict();
 const PortalInput=z.object({messages:z.array(Message).min(1).max(24),context:z.object({view:z.enum(['jobs','invoices','reports','exceptions','history','settings']).optional()}).strict().optional()}).strict();
-const Output=z.object({choices:z.array(z.object({message:z.object({content:z.string()})})).min(1)});
+const Output=z.object({id:z.string().optional(),model:z.string().optional(),usage:OpenRouterUsageSchema.optional(),choices:z.array(z.object({message:z.object({content:z.string()})})).min(1)});
 
 const SYSTEM_PROMPT=`You are Olympian AI Support on a freight-broker customer's private audit result page.
 Answer only questions about Olympian, the audit result, billing periods, plans, checkout, security, and how the service works. Be concise, practical, and honest. If a fact is not listed below, say you do not know and tell the visitor to reply to their Olympian audit email. Never invent policies, savings, audit findings, integrations, legal conclusions, or payment status.
@@ -29,7 +31,7 @@ Safety rules:
 - Keep responses under 120 words and use plain English.`;
 
 const PORTAL_SYSTEM_PROMPT=`You are Olympian AI Support inside a freight-broker customer's authenticated portal.
-Answer only questions about using Olympian, invoice-audit workflows, portal navigation, submissions, findings, reports, billing, security, and supported integrations. Match the language used by the customer. Be concise, practical, and honest. If a fact is not listed below, say you do not know and tell the customer to contact their Olympian account representative. Never invent policies, audit findings, integrations, legal conclusions, payment status, or account data.
+Answer only questions about using Olympian, invoice-audit workflows, portal navigation, submissions, findings, reports, billing, security, and supported integrations. Always respond in clear American English. Be concise, practical, and honest. If a fact is not listed below, say you do not know and tell the customer to contact their Olympian account representative. Never invent policies, audit findings, integrations, legal conclusions, payment status, or account data.
 
 Verified portal facts:
 - Processing queue tracks each incoming submission as queued, processing, completed, needs review, blocked, or ignored.
@@ -56,28 +58,31 @@ Safety rules:
 - Do not claim to inspect the customer's workspace, documents, report, subscription, or current processing state. You only know general product guidance and the non-sensitive page name supplied by the application.
 - Keep responses under 140 words.`;
 
-async function completeSupport(messages:z.infer<typeof Message>[],systemPrompt:string,fetcher:typeof fetch):Promise<string>{
+async function completeSupport(messages:z.infer<typeof Message>[],systemPrompt:string,fetcher:typeof fetch,context?:CostContext):Promise<string>{
  const recent=messages.slice(-8);const total=recent.reduce((sum,message)=>sum+message.content.length,0);
  if(total>6000||recent.at(-1)?.role!=='user')throw new HttpError(400,'invalid_conversation');
  const key=process.env.OPENROUTER_API_KEY?.trim();if(!key)throw new Error('SUPPORT_PROVIDER_NOT_CONFIGURED');
  const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),15_000);
  try{
-  const response=await fetcher('https://openrouter.ai/api/v1/chat/completions',{method:'POST',signal:controller.signal,headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json','HTTP-Referer':'https://aiolympian.com','X-OpenRouter-Title':'Olympian AI Support'},body:JSON.stringify({model:MODEL,temperature:0.2,max_tokens:350,messages:[{role:'system',content:systemPrompt},...recent]})});
-  const body=await readResponseBody(response,128*1024);const output=Output.parse(JSON.parse(body.toString('utf8')));const answer=output.choices[0]?.message.content.trim();if(!answer)throw new Error('SUPPORT_EMPTY_RESPONSE');return answer;
+  const response=await fetcher('https://openrouter.ai/api/v1/chat/completions',{method:'POST',signal:controller.signal,headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json','HTTP-Referer':'https://aiolympian.com','X-OpenRouter-Title':'Olympian AI Support'},body:JSON.stringify({model:MODEL,temperature:0.2,max_tokens:350,usage:{include:true},messages:[{role:'system',content:systemPrompt},...recent]})});
+  const body=await readResponseBody(response,128*1024);const output=Output.parse(JSON.parse(body.toString('utf8')));await recordOpenRouterUsage({context,operation:'support_response',model:output.model??MODEL,requestId:output.id,usage:output.usage});const answer=output.choices[0]?.message.content.trim();if(!answer)throw new Error('SUPPORT_EMPTY_RESPONSE');return answer;
  }finally{clearTimeout(timeout);}
 }
 
-export async function answerSupport(raw:unknown,fetcher:typeof fetch=fetch):Promise<string>{
- const input=Input.parse(raw);return completeSupport(input.messages,SYSTEM_PROMPT,fetcher);
+export async function answerSupport(raw:unknown,fetcher:typeof fetch=fetch,context?:CostContext):Promise<string>{
+ const input=Input.parse(raw);return completeSupport(input.messages,SYSTEM_PROMPT,fetcher,context);
 }
 
-export async function answerPortalSupport(raw:unknown,fetcher:typeof fetch=fetch):Promise<{answer:string;offerHuman:boolean}>{
+export async function answerPortalSupport(raw:unknown,fetcher:typeof fetch=fetch,context?:CostContext):Promise<{answer:string;offerHuman:boolean}>{
  const input=PortalInput.parse(raw);const last=input.messages.at(-1)?.content??'';
  if(/\b(human|person|agent|representative|humano|pessoa|atendente|suporte humano|falar com (?:o )?suporte)\b/i.test(last)){
-  const portuguese=/\b(humano|pessoa|atendente|suporte|falar|quero)\b/i.test(last);
-  return {answer:portuguese?'Claro. Um especialista de suporte pode falar com você por este chat em até 15 minutos. Descreva abaixo o problema para eu encaminhar com todo o contexto.':'Of course. A support specialist can contact you in this chat within 15 minutes. Describe the issue below so I can send the full context.',offerHuman:true};
+  return {answer:'Of course. A support specialist can contact you in this chat within 15 minutes. Describe the issue below so I can send the full context.',offerHuman:true};
+ }
+ if(process.env.JEV_ENABLED==='true'){
+  try{const routing=await routeSupportWithJev(last,input.context?.view,context);if(routing.offerHuman)return {answer:'A support specialist should handle this request. They can contact you in this chat within 15 minutes. Please describe the issue without sharing documents, credentials, banking, or card information.',offerHuman:true};}
+  catch{return {answer:'A support specialist should handle this request. They can contact you in this chat within 15 minutes. Please describe the issue without sharing documents, credentials, banking, or card information.',offerHuman:true};}
  }
  const page=input.context?.view?`\nThe customer opened support from the ${input.context.view} portal view. Use this only to make navigation guidance more relevant.`:'';
- const rawAnswer=await completeSupport(input.messages,PORTAL_SYSTEM_PROMPT+page,fetcher);const offerHuman=rawAnswer.includes('[[OFFER_HUMAN]]');
+ const rawAnswer=await completeSupport(input.messages,PORTAL_SYSTEM_PROMPT+page,fetcher,context);const offerHuman=rawAnswer.includes('[[OFFER_HUMAN]]');
  return {answer:rawAnswer.replace(/\s*\[\[OFFER_HUMAN\]\]\s*/g,'').trim(),offerHuman};
 }

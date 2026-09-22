@@ -39,6 +39,8 @@ const Config=z.object({
  METRICS_TOKEN:z.string().min(32),
  CSRF_SECRET:z.string().min(32),
  OPENROUTER_ALLOWED_MODELS:z.string().min(1),OPENROUTER_DATA_PROCESSING_ACK:z.literal('true'),
+ JEV_ENABLED:z.enum(['true','false']).default('false'),JEV_MODEL:z.string().min(1).default('typesafe/jev-1.13'),JEV_ALLOWED_MODELS:z.string().min(1).default('typesafe/jev-1.13'),
+ JEV_DECISION_THRESHOLD:z.coerce.number().min(0.5).max(1).default(0.8),JEV_SUPPORT_THRESHOLD:z.coerce.number().min(0.5).max(1).default(0.85),JEV_BATCH_SIZE:z.coerce.number().int().min(1).max(20).default(8),
  FREE_AUDIT_ORIGIN:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_ORIGINS:z.string().optional(),FREE_AUDIT_PUBLIC_URL:z.string().url().transform(value=>new URL(value).origin),FREE_AUDIT_OFFER_URL:z.string().url(),
  GOOGLE_CHAT_LEADS_WEBHOOK_URL:z.string().url(),GOOGLE_CHAT_ERRORS_WEBHOOK_URL:z.string().url(),GOOGLE_CHAT_SUPPORT_WEBHOOK_URL:z.string().url(),
  ROSE_ROCKET_ENABLED:z.enum(['true','false']).default('false'),

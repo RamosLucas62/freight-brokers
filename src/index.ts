@@ -27,12 +27,14 @@ async function main(): Promise<void> {
 
   console.error(`[audit] run_id=${ctx.run_id}, files=${args.length}`);
 
+  const tenantId=process.env.AUDIT_TENANT_ID ?? (dryRun ? '00000000-0000-4000-8000-000000000001' : '');
   const report = await runAuditPipeline({
-    tenantId: process.env.AUDIT_TENANT_ID ?? (dryRun ? '00000000-0000-4000-8000-000000000001' : ''),
+    tenantId,
     filePaths:  args,
     ctx,
     extractor,
     getCarrier,
+    ...(!dryRun?{costContext:{tenantId,subjectType:'audit_run' as const,subjectId:ctx.run_id}}:{}),
     ...(dryRun ? { store: { assertActive: async () => {}, history: async () => [], commit: async () => {} } } : {}),
   });
   if (dryRun) report.warnings = [...(report.warnings ?? []), 'DRY RUN: no audit saved and no historical invoices loaded.'];

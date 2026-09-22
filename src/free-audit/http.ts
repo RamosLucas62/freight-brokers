@@ -172,7 +172,7 @@ export function createFreeAuditHttpHandler(config:{allowedOrigins:string[];publi
     const expectedOrigin=new URL(config.publicUrl).origin;if(req.headers.origin!==expectedOrigin){warn('support.rejected',{request_id:traceId,reason:'origin_not_allowed'});respond(res,403,{message:'AI support is unavailable from this page.'});req.resume();return true;}
     const rate=await limiter.consume({scope:'support-ip',key:ip,limit:20,windowSeconds:3600,failClosed:true});if(!rate.allowed){res.setHeader('Retry-After',String(rate.retryAfter));respond(res,429,{message:'AI support is receiving too many requests. Please try again later.'});req.resume();return true;}
     const contentType=req.headers['content-type']?.split(';',1)[0].trim().toLowerCase();if(contentType!=='application/json')throw new HttpError(415,'json_required');
-    const raw=JSON.parse((await readBody(req,16*1024)).toString('utf8'));const answer=await answerSupport(raw);info('support.completed',{request_id:traceId});respond(res,200,{answer});return true;
+    const raw=JSON.parse((await readBody(req,16*1024)).toString('utf8'));const answer=await answerSupport(raw,fetch,{subjectType:'public_support',subjectId:traceId});info('support.completed',{request_id:traceId});respond(res,200,{answer});return true;
    }catch(error){if(error instanceof z.ZodError||error instanceof SyntaxError||error instanceof HttpError){respond(res,error instanceof HttpError?error.status:400,{message:'Please send a shorter support question and try again.'});return true;}failure('support.failed',error,{request_id:traceId});respond(res,503,{message:'AI support is temporarily unavailable. Please reply to your Olympian audit email for help.'});return true;}
   }
   if(resultCheckout&&req.method==='POST'){
