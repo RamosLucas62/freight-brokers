@@ -9,6 +9,7 @@ export const RULE_LABELS: Readonly<Record<string, string>> = {
   RATE_CONFIRMATION_MISMATCH: 'Rate Confirmation Mismatch',
   UNSUPPORTED_ACCESSORIAL: 'Unsupported Accessorial Charge',
   UNBILLED_ACCESSORIAL: 'Potential Unbilled Accessorial Revenue',
+  JEV_SEMANTIC_REVIEW: 'Semantic Evidence Review',
 };
 
 export function ruleLabel(code: string | null | undefined): string {

@@ -46,7 +46,7 @@ export async function processFreeAudit(sender:ResendSender,signupUrl:string,publ
    dir=await mkdtemp(join(tmpdir(),'free-audit-'));const paths:string[]=[];const labels:Record<string,string>={};
    for(const attachment of attachments){stage='download_r2';const bytes=await getPrivateObject(attachment.storage_path);stage='scan_pdf';await scanPdf(bytes);stage='prepare_pdf';const path=join(dir,`${attachment.attachment_id}.pdf`);await writeFile(path,bytes,{mode:0o600});paths.push(path);labels[path]=attachment.filename;}
    stage='audit_pipeline';
-   report=await runAuditPipeline({tenantId:request.id,filePaths:paths,sourceLabels:labels,ctx:{run_id:request.id,carrierCache:new Map(),cacheTtlHours:Number(process.env.CARRIER_CACHE_TTL_HOURS??4)},extractor,getCarrier,store:transientStore,minimumInvoiceDate:minimumDate(),maximumInvoiceDate:new Date().toISOString().slice(0,10)});
+   report=await runAuditPipeline({tenantId:request.id,filePaths:paths,sourceLabels:labels,ctx:{run_id:request.id,carrierCache:new Map(),cacheTtlHours:Number(process.env.CARRIER_CACHE_TTL_HOURS??4)},extractor,getCarrier,store:transientStore,costContext:{subjectType:'free_audit',subjectId:request.id},minimumInvoiceDate:minimumDate(),maximumInvoiceDate:new Date().toISOString().slice(0,10)});
    assertFreeAuditReport(report);
    report.tenant_id=undefined;
    report.warnings=[...(report.warnings??[]),'Only invoices dated within the 30 days before processing are included. Documents without a readable invoice or load date remain included for manual review.'];

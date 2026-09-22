@@ -5,6 +5,7 @@ import type { IExtractionProvider } from './extraction.interface.js';
 import type { InvoiceExtractionResult } from '../types/invoice.types.js';
 import { ExtractionResultSchema } from './schema.js';
 import {readResponseBody} from '../security/http.js';
+import {OpenRouterUsageSchema,recordOpenRouterUsage,type CostContext} from '../costs/telemetry.js';
 
 const nullableText = { type: ['string', 'null'] };
 const object = (properties: Record<string, unknown>) => ({
@@ -42,6 +43,7 @@ const payloadSchema = z.object({
 });
 const envelopeSchema = z.object({
   id: z.string().optional(), model: z.string().optional(),
+  usage:OpenRouterUsageSchema.optional(),
   choices: z.array(z.object({ finish_reason: z.literal('stop'),
     message: z.object({ content: z.string(), refusal: z.string().nullish() }),
   })).length(1),
@@ -63,7 +65,7 @@ If there is not exactly one invoice, return its count with null fields and an em
 export class OpenRouterInvoiceExtractor implements IExtractionProvider {
   constructor(private readonly request: typeof fetch = fetch) {}
 
-  async extract(file: string): Promise<InvoiceExtractionResult> {
+  async extract(file: string,context?:CostContext): Promise<InvoiceExtractionResult> {
     const key = process.env.OPENROUTER_API_KEY?.trim();
     if (!key) throw new Error('Set OPENROUTER_API_KEY before extracting invoices.');
     const model = process.env.OPENROUTER_MODEL?.trim() || 'google/gemini-2.5-flash';
@@ -80,7 +82,7 @@ export class OpenRouterInvoiceExtractor implements IExtractionProvider {
       response = await this.request('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(120_000),
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, stream: false, max_tokens: 8192,
+        body: JSON.stringify({ model, stream: false, max_tokens: 8192,usage:{include:true},
           provider: { require_parameters: true, data_collection: 'deny' },
           plugins: [{ id: 'file-parser', pdf: { engine } }],
           response_format: { type: 'json_schema', json_schema: { name: 'freight_invoice', strict: true, schema } },
@@ -102,6 +104,7 @@ export class OpenRouterInvoiceExtractor implements IExtractionProvider {
       if (envelope.choices[0].message.refusal) throw new Error('Refused');
       payload = payloadSchema.parse(JSON.parse(envelope.choices[0].message.content));
     } catch { throw new Error('OpenRouter returned an incomplete, refused or invalid extraction; no invoice accepted.'); }
+    await recordOpenRouterUsage({context,operation:'invoice_extraction',model:envelope.model??model,requestId:envelope.id,usage:envelope.usage,metadata:{pdf_engine:engine}});
     if (payload.invoice_count !== 1) throw new Error('Expected exactly one invoice per PDF; split the document and retry.');
     // Confidence is calculated later from verifiable signals; it is never copied from model self-assessment.
     return {

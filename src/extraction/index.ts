@@ -4,12 +4,13 @@ import { OpenRouterInvoiceExtractor } from './openrouter.extractor.js';
 import type { IExtractionProvider } from './extraction.interface.js';
 import type { InvoiceExtractionResult } from '../types/invoice.types.js';
 import { StubExtractor } from './stub.extractor.js';
+import type {CostContext} from '../costs/telemetry.js';
 
-class ValidatingExtractor implements IExtractionProvider {
+export class ValidatingExtractor implements IExtractionProvider {
   constructor(private readonly inner: IExtractionProvider) {}
 
-  async extract(filePath: string): Promise<InvoiceExtractionResult> {
-    const result = await this.inner.extract(filePath);
+  async extract(filePath: string,context?:CostContext): Promise<InvoiceExtractionResult> {
+    const result = await this.inner.extract(filePath,context);
     const parsed = ExtractionResultSchema.safeParse(result);
     if (!parsed.success) {
       throw new Error(

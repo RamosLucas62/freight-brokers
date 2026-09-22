@@ -301,6 +301,13 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
    const result=await serviceDb.rpc('portal_admin_confidence_reviews',{p_actor:user.user.id,p_page:page});
    if(result.error)throw result.error;send(200,result.data);return true;
   }
+  if(url.pathname==='/api/portal/admin/costs'&&req.method==='GET'){
+   const tenantParam=url.searchParams.get('company');const fromParam=url.searchParams.get('from');const toParam=url.searchParams.get('to');
+   const tenantFilter=tenantParam?uuid.parse(tenantParam):null;
+   const date=z.string().datetime({offset:true});const from=fromParam?date.parse(fromParam):new Date(Date.UTC(new Date().getUTCFullYear(),new Date().getUTCMonth(),1)).toISOString();const to=toParam?date.parse(toParam):new Date().toISOString();
+   const result=await serviceDb.rpc('portal_admin_costs',{p_actor:user.user.id,p_tenant:tenantFilter,p_from:from,p_to:to});if(result.error)throw result.error;
+   send(200,result.data);return true;
+  }
   if(url.pathname==='/api/portal/admin/crm'&&req.method==='GET'){
    const leads=await serviceDb.from('free_audit_requests').select('id,email,contact_name,company_name,phone,loads_per_month,status,created_at,updated_at,completed_at,result,utm_source,utm_medium,utm_campaign,utm_term,utm_content',{count:'exact'}).neq('status','expired').order('created_at',{ascending:false}).limit(500);
    if(leads.error)throw leads.error;
@@ -366,7 +373,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   if(conversation.status==='waiting'||conversation.status==='active'){
    operation=undefined;send(200,{conversation_id:conversation.id,status:conversation.status,human_active:true});return true;
   }
-  const result=await answerPortalSupport(parsed);
+  const result=await answerPortalSupport(parsed,fetch,{tenantId:tenant,subjectType:'support_conversation',subjectId:conversation.id});
   const aiSaved=await serviceDb.rpc('portal_support_append_message',{p_tenant:tenant,p_user:user.user.id,p_conversation:conversation.id,p_author_type:'ai',p_body:result.answer});if(aiSaved.error)throw aiSaved.error;
   info('portal.support.completed',{request_id:requestId(req),tenant_id:tenant,actor_user_id:user.user.id,conversation_id:conversation.id,offered_human:result.offerHuman});
   operation=undefined;send(200,{answer:result.answer,offer_human:result.offerHuman,conversation_id:conversation.id,status:'ai'});return true;

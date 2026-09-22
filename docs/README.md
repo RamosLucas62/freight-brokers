@@ -1,6 +1,6 @@
 # Índice da documentação
 
-Este diretório é a fonte de referência do Olympian Freight Audit. A documentação descreve o comportamento presente no código e nas migrações até `035_rose_rocket_customer_connection.sql`.
+Este diretório é a fonte de referência do Olympian Freight Audit. A documentação descreve o comportamento presente no código e nas migrações até `037_cost_telemetry.sql`.
 
 ## Visão geral
 
@@ -11,6 +11,7 @@ Este diretório é a fonte de referência do Olympian Freight Audit. A documenta
 | [Portal do cliente](customer-portal.md) | Configurar autenticação, onboarding, permissões, CRM e administração. |
 | [Preços e uso](pricing-and-usage.md) | Entender planos, limites, contagem e cobrança de excedentes. |
 | [Confiança verificável](verifiable-confidence.md) | Operar o motor de evidências, QA e calibração. |
+| [Jev e custos por cliente](jev-and-cost-telemetry.md) | Ativar decisões Jev e acompanhar tokens e custos do processo. |
 
 ## Entrada e processamento
 

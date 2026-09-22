@@ -11,7 +11,8 @@ export type RuleName =
   | 'CARRIER_VERIFICATION_REQUIRED'
   | 'RATE_CONFIRMATION_MISMATCH'
   | 'UNSUPPORTED_ACCESSORIAL'
-  | 'UNBILLED_ACCESSORIAL';
+  | 'UNBILLED_ACCESSORIAL'
+  | 'JEV_SEMANTIC_REVIEW';
 
 export interface RuleException {
   invoice_id:      string;

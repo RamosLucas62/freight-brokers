@@ -68,7 +68,7 @@ describe('buildReport', () => {
   });
 
   it('provides a customer-facing label for every rule name', () => {
-    expect(Object.keys(RULE_LABELS)).toHaveLength(10);
+    expect(Object.keys(RULE_LABELS)).toHaveLength(11);
     for (const [code, label] of Object.entries(RULE_LABELS)) {
       expect(ruleLabel(code)).toBe(label);
       expect(label).not.toMatch(/^[A-Z0-9_]+$/);

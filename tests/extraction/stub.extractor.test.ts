@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { StubExtractor } from '../../src/extraction/stub.extractor.js';
-import { ExtractionResultSchema } from '../../src/extraction/index.js';
+import { ExtractionResultSchema, ValidatingExtractor } from '../../src/extraction/index.js';
 
 describe('StubExtractor', () => {
   const extractor = new StubExtractor();
@@ -53,5 +53,13 @@ describe('StubExtractor', () => {
       expect(acc.confidence).toBeGreaterThanOrEqual(0);
       expect(acc.confidence).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('forwards the cost attribution context through contract validation', async () => {
+    const context={tenantId:'11111111-1111-4111-8111-111111111111',subjectType:'audit_run' as const,subjectId:'run-1'};
+    const inner=new StubExtractor();
+    const extract=vi.spyOn(inner,'extract');
+    await new ValidatingExtractor(inner).extract('test.pdf',context);
+    expect(extract).toHaveBeenCalledWith('test.pdf',context);
   });
 });
