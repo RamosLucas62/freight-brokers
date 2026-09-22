@@ -26,7 +26,7 @@ export async function claim():Promise<InboundJob|null> {
  return data?.[0]??null;
 }
 export async function finish(job:InboundJob,status:string,result:AuditReport|null,errorCode:string|null) {
- const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({status,result,error_code:errorCode,finished_at:new Date().toISOString()})
+ const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({status,result,error_code:errorCode,...(status==='completed'?{evidence_issues:null}:{}),finished_at:new Date().toISOString()})
  .eq('id',job.id).eq('tenant_id',job.tenant_id).eq('status','processing');
  if(error)throw new Error('QUEUE_UPDATE_FAILED');
 }
@@ -81,4 +81,13 @@ export async function savedReport(job:InboundJob):Promise<AuditReport|null> {
  const {data,error}=await getSupabaseClient().from('audit_runs').select('report').eq('tenant_id',job.tenant_id).eq('run_id',job.id).maybeSingle();
  if(error)throw new Error('REPORT_LOOKUP_FAILED');
  return data?.report??null;
+}
+
+export async function recordEvidenceIssues(job:InboundJob,issues:import('../reconciliation/evidence.js').EvidenceIssue[]){
+ const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({evidence_issues:issues}).eq('id',job.id).eq('tenant_id',job.tenant_id).eq('status','processing');
+ if(error)throw new Error('EVIDENCE_STATUS_UPDATE_FAILED');
+}
+export async function validateTmsIntake(job:InboundJob){
+ const {error}=await getSupabaseClient().rpc('validate_tms_document_intake',{p_job:job.id});
+ if(error)throw new Error('TMS_VALIDATION_UPDATE_FAILED');
 }

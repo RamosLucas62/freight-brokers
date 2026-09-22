@@ -275,7 +275,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   }
   const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);
   if(url.pathname==='/api/portal/admin/integrations'&&req.method==='GET'){
-   const result=await serviceDb.from('audit_tms_connections').select('tenant_id,provider,status,account_label,verified_at,requested_at,updated_at,sync_enabled,last_synced_at,sync_error,imported_batches,audit_tenants(name)',{count:'exact'}).order('updated_at',{ascending:false}).range(page*50,page*50+49);
+   const result=await serviceDb.from('audit_tms_connections').select('tenant_id,provider,status,account_label,verified_at,requested_at,updated_at,sync_enabled,intake_validated_at,last_synced_at,sync_error,imported_batches,audit_tenants(name)',{count:'exact'}).order('updated_at',{ascending:false}).range(page*50,page*50+49);
    if(result.error)throw result.error;
    send(200,{rows:result.data??[],total:result.count??0});return true;
   }
@@ -351,7 +351,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
  const roseTenant=tenantMembership?.audit_tenants as unknown as {status?:string}|undefined;
  const roseSetupAvailable=process.env.WORKER_ENABLED==='true'&&process.env.ROSE_ROCKET_CONNECT_ENABLED!=='false'&&roseCredentialsReady();
  if(url.pathname==='/api/portal/integrations'&&req.method==='GET'){
-  const connections=await serviceDb.from('audit_tms_connections').select('provider,status,account_label,verified_at,requested_at,sync_enabled,last_synced_at,sync_error,imported_batches').eq('tenant_id',tenant);
+  const connections=await serviceDb.from('audit_tms_connections').select('provider,status,account_label,verified_at,requested_at,sync_enabled,intake_validated_at,last_synced_at,sync_error,imported_batches').eq('tenant_id',tenant);
   if(connections.error)throw connections.error;
   send(200,{providers:tmsProviders.map(provider=>({...provider,can_manage:canManageRose,
    setup_available:provider.id==='rose-rocket'?roseSetupAvailable:['tai','mcleod'].includes(provider.id)?process.env.WORKER_ENABLED==='true'&&tmsCredentialsReady():false,
@@ -551,7 +551,7 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   if(error){send(409,{error:'Unable to save this outcome. Please refresh and try again.'});return true;}
   send(200,{ok:true});return true;
  }
- const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,source,tms_provider,tms_record_id,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,verification,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at,resolution_status,avoided_amount,resolution_note,resolved_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
+ const tables:Record<string,[string,string]>={jobs:['audit_inbound_jobs','id,email_id,source,tms_provider,tms_record_id,evidence_issues,status,error_code,result,created_at,started_at,finished_at'],invoices:['invoices','id,numero_fatura,numero_carga,carrier_name,mc_number,data_fatura,valor_total,origem,destino,verification,created_at'],reports:['audit_runs','run_id,report,created_at'],exceptions:['exceptions','id,invoice_id,tipo_regra,valor_envolvido,descricao,source_file,source_page,created_at,resolution_status,avoided_amount,resolution_note,resolved_at'],history:['audit_job_reviews','id,job_id,action,note,actor_email,actor_role,created_at']};
  const table=tables[url.pathname.split('/').pop()??''];
  if(table&&req.method==='GET'){
  const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0);

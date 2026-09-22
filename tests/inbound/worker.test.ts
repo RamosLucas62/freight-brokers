@@ -1,6 +1,7 @@
+import {IncompleteTmsEvidence} from '../../src/reconciliation/evidence.js';
 import {describe,it,expect,vi,beforeEach} from 'vitest';
 const documentMocks=vi.hoisted(()=>({classify:vi.fn(),extractPod:vi.fn(),extractRate:vi.fn()}));
-vi.mock('../../src/inbound/repository.js',()=>({assertEmailIntakeEnabled:vi.fn(),savedReport:vi.fn(),finish:vi.fn(),scheduleRetry:vi.fn(),saveAttachment:vi.fn(),storedDocuments:vi.fn(),setDocumentType:vi.fn(),cacheExtraction:vi.fn(),cacheSupportingExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
+vi.mock('../../src/inbound/repository.js',()=>({recordEvidenceIssues:vi.fn(),validateTmsIntake:vi.fn(),assertEmailIntakeEnabled:vi.fn(),savedReport:vi.fn(),finish:vi.fn(),scheduleRetry:vi.fn(),saveAttachment:vi.fn(),storedDocuments:vi.fn(),setDocumentType:vi.fn(),cacheExtraction:vi.fn(),cacheSupportingExtraction:vi.fn(),recordBillableInvoice:vi.fn()}));
 vi.mock('../../src/db/audit.repo.js',()=>({createAuditStore:vi.fn()}));
 vi.mock('../../src/pipeline/audit.pipeline.js',()=>({runAuditPipeline:vi.fn()}));
 vi.mock('../../src/extraction/index.js',()=>({extractor:{extract:vi.fn()}}));
@@ -81,4 +82,12 @@ it('blocks queued email before provider access when a TMS is active',async()=>{
 it('stops an email when TMS activation occurs during attachment discovery',async()=>{
  vi.mocked(repo.assertEmailIntakeEnabled).mockResolvedValueOnce().mockRejectedValue(new Error('EMAIL_INTAKE_DISABLED_TMS'));
  await processJob(job,client);expect(client.attachments).toHaveBeenCalledOnce();expect(client.download).not.toHaveBeenCalled();expect(runAuditPipeline).not.toHaveBeenCalled();
+});
+
+it('keeps incomplete TMS evidence in review and does not validate email shutoff',async()=>{
+ const {TmsReceivingClient}=await import('../../src/tms/sync.js');
+ const tmsJob={...job,source:'tms',tms_provider:'tai'};const tmsClient=new TmsReceivingClient(tmsJob);
+ vi.spyOn(tmsClient,'authorize').mockResolvedValue();vi.spyOn(tmsClient,'attachments').mockImplementation(client.attachments);vi.spyOn(tmsClient,'download').mockImplementation(client.download);
+ const issues=[{load:'LOAD-1',missing:['POD','RATE_CONFIRMATION']}];vi.mocked(runAuditPipeline).mockRejectedValue(new IncompleteTmsEvidence(issues));
+ await processJob(tmsJob,tmsClient);expect(repo.recordEvidenceIssues).toHaveBeenCalledWith(tmsJob,issues);expect(repo.finish).toHaveBeenCalledWith(tmsJob,'needs_review',null,'TMS_EVIDENCE_INCOMPLETE');expect(repo.validateTmsIntake).not.toHaveBeenCalled();
 });

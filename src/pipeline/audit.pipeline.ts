@@ -11,6 +11,7 @@ import { ALL_RULES } from '../rules/index.js';
 import { buildReport } from '../report/report.builder.js';
 import type {PodExtractionResult} from '../pod/types.js';
 import type {RateConfirmationExtractionResult} from '../rate-confirmation/types.js';
+import {IncompleteTmsEvidence,tmsEvidenceIssues} from '../reconciliation/evidence.js';
 import {reconcileDocuments} from '../reconciliation/reconcile.js';
 import {confidenceSummary,verifyInvoice} from '../confidence/engine.js';
 import {info} from '../observability/logger.js';
@@ -30,6 +31,8 @@ export interface PipelineOptions {
   pods?:PodExtractionResult[];
   rateConfirmations?:RateConfirmationExtractionResult[];
   reconcileSupportingDocuments?:boolean;
+  requireTmsEvidence?:boolean;
+  onTmsEvidenceValidated?:()=>Promise<void>;
   costContext?:CostContext;
   jevReview?:typeof reviewAuditWithJev;
 }
@@ -67,6 +70,11 @@ export async function runAuditPipeline(options: PipelineOptions): Promise<AuditR
       accessorials: result.accessorials, extraction_raw: result.extraction_raw, created_at: new Date().toISOString() });
     known.add(hash);
   }
+  if(options.requireTmsEvidence&&(invoices.length||!skipped.length)){
+    const issues=tmsEvidenceIssues(invoices,options.pods??[],options.rateConfirmations??[],Number(process.env.SUPPORTING_DOCUMENT_CONFIDENCE_THRESHOLD??0.9));
+    if(issues.length)throw new IncompleteTmsEvidence(issues);
+  }
+  if(options.requireTmsEvidence)await options.onTmsEvidenceValidated?.();
   const currentIds = new Set(invoices.map(inv => inv.id));
   const ruleContext:AuditContext={...ctx,currentInvoiceIds:currentIds};
   const exceptions: RuleException[] = [];
@@ -75,8 +83,7 @@ export async function runAuditPipeline(options: PipelineOptions): Promise<AuditR
     const input = historicalRules.has(rule.name) ? [...history, ...invoices] : invoices;
     exceptions.push(...(await rule.evaluate(input, getCarrier, ruleContext)).filter(ex => currentIds.has(ex.invoice_id)));
   }
-  const hasSupportingDocuments=Boolean((options.pods?.length??0)+(options.rateConfirmations?.length??0));
-  const reconciliation=options.reconcileSupportingDocuments&&hasSupportingDocuments
+  const reconciliation=options.reconcileSupportingDocuments
    ?reconcileDocuments(invoices,options.pods??[],options.rateConfirmations??[],Number(process.env.SUPPORTING_DOCUMENT_CONFIDENCE_THRESHOLD??0.9))
    :{exceptions:[],summary:{matched:0,divergent:0,unverifiable:0,unbilled_revenue:0,supporting_documents:0},warnings:[]};
   exceptions.push(...reconciliation.exceptions);
@@ -86,6 +93,7 @@ export async function runAuditPipeline(options: PipelineOptions): Promise<AuditR
   report.confidence=confidenceSummary(invoices);
   info('audit.confidence.measured',{tenant_id:tenantId,run_id:ctx.run_id,invoices:invoices.length,...report.confidence});
   report.reconciliation=reconciliation.summary;
+  if(options.requireTmsEvidence)report.document_coverage={validated_invoices:invoices.length,checks:['carrier_invoice','matched_signed_pod','matched_rate_confirmation'],scope:'basic_freight_evidence'};
   report.tenant_id = tenantId;
   report.skipped_files = skipped;
   report.warnings = ['Carrier checks describe lookup-time status; historical load-date authority is not verified.'];

@@ -26,8 +26,19 @@ Credential setup is not a consent-only OAuth flow. Missing permissions fail setu
 or produce a visible synchronization error; they cannot be provisioned by this app.
 Existing verified Tai accounts remain paused until the owner selects **Enable
 automatic import**. Existing Rose accounts reconnect to register the new webhook.
-An active verified TMS connection disables email document intake for the whole
-company. Outgoing report emails remain enabled. Customers must disconnect every
+Credential verification starts collection but leaves email available. A completed
+TMS audit containing at least one invoice with high-confidence matched signed POD,
+delivery date and rate confirmation/authorized total validates the initial intake.
+Only then is email document intake disabled for the whole company. Credential
+changes reset this validation. This is an initial delivery check, not certification
+of all vendor data or future loads. Every TMS batch independently requires evidence
+for every new invoice before any invoice/report commit. Missing or ambiguous
+documents are listed on the job as evidence needed. Receipts and terms for additional
+charges beyond fuel are not modeled; these batches require manual review and are
+not represented as complete. Late documents create a new batch on the next scan.
+Unchanged incomplete batches remain in review, avoiding repeated automatic work.
+During initial validation identical PDF content remains protected by existing
+tenant/hash audit and invoice-usage uniqueness checks. Outgoing report emails remain enabled. Customers must disconnect every
 active TMS connection to use email for documents outside the supported scope.
 Temporary sync errors do not reopen email. New emails are recorded as blocked;
 already queued emails are checked before downloading and before auditing. Work
@@ -74,7 +85,7 @@ unknown endpoints, document semantics, pagination or webhook authentication.
 
 ## Deployment and operation
 
-1. Apply migrations through `040_exclusive_document_intake.sql` using the normal
+1. Apply migrations through `041_tms_evidence_validation.sql` using the normal
    migration process. The isolated database test does not modify production.
 2. Configure `ROSE_ROCKET_CREDENTIAL_KEY` and `TMS_CREDENTIAL_KEY` as separate,
    stable 32-byte base64url encryption keys in the deployment secret store. Keep
@@ -125,3 +136,16 @@ disposable PostgreSQL instance. They cover discovery/download contracts, unsafe
 URLs, credentials, tenant isolation, role gates, worker leases, deduplication,
 disconnect, failures and the shared audit pipeline. They do not prove live vendor
 compatibility. No production secrets or database state were changed for this PR.
+
+
+## Live acceptance still required
+
+No supplier test tenant was available during development. Before production release,
+use authorized accounts for each supported product/version to exercise: a complete
+invoice/POD/rate package; a missing POD; a missing or mismatched rate confirmation;
+unsigned/illegible POD; late attachments; invoice replacement; supplementary fees;
+duplicate PDFs across email and TMS; credential rotation; and disconnect. Inspect
+actual downloaded PDFs and load references against the supplier UI. Verify the
+initial-collection state and email transition, and confirm incomplete batches remain
+in review. This cannot be replaced with simulated endpoint tests. Rose bill/manifest
+attachments, historical discovery and unsupported provider APIs remain outstanding.
