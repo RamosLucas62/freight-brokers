@@ -22,9 +22,17 @@ describe('TMS evidence readiness',()=>{
  });
  it('holds ambiguous documents and additional charges for review',()=>{
   const invoice=makeInvoice();invoice.accessorials[0].tipo='DETENTION';
-  expect(tmsEvidenceIssues([invoice],[pod(),pod()],[rate()])[0].missing).toEqual(['AMBIGUOUS_POD','ACCESSORIAL_EVIDENCE_REVIEW']);
+  expect(tmsEvidenceIssues([invoice],[pod(),pod()],[rate()])[0].missing).toEqual(['AMBIGUOUS_POD','ACCESSORIAL_DOCUMENT','ACCESSORIAL_EVIDENCE_REVIEW']);
  });
  it('checks every invoice rather than presence of any POD and rate confirmation',()=>{
   expect(tmsEvidenceIssues([makeInvoice(),makeInvoice({numero_carga:'LOAD-2'})],[pod()],[rate()])).toEqual([{load:'LOAD-2',missing:['POD','RATE_CONFIRMATION']}]);
  });
+});
+
+it('retains a terms-review requirement even when matching receipt evidence is present',()=>{
+ const invoice=makeInvoice();invoice.accessorials[0].tipo='LUMPER';
+ const receipt={fields:{load_number:field('LOAD-9876')}} as any;
+ expect(tmsEvidenceIssues([invoice],[pod()],[rate()],.9,[receipt])[0].missing).toEqual(['ACCESSORIAL_EVIDENCE_REVIEW']);
+ receipt.fields.load_number=field('ANOTHER-LOAD');
+ expect(tmsEvidenceIssues([invoice],[pod()],[rate()],.9,[receipt])[0].missing).toContain('ACCESSORIAL_DOCUMENT');
 });

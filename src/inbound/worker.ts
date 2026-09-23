@@ -17,6 +17,8 @@ import {PodExtractionSchema} from '../pod/schema.js';
 import {OpenRouterRateConfirmationExtractor} from '../rate-confirmation/openrouter.extractor.js';
 import {RateConfirmationExtractionSchema} from '../rate-confirmation/schema.js';
 import {TmsReceivingClient} from '../tms/sync.js';
+import {AccessorialExtractionSchema} from '../accessorial/schema.js';
+import {OpenRouterAccessorialExtractor} from '../accessorial/openrouter.extractor.js';
 import {IncompleteTmsEvidence} from '../reconciliation/evidence.js';
 import {inboundFailureDecision} from './failure-policy.js';
 
@@ -62,11 +64,12 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   if(job.source!=='tms')await repository.assertEmailIntakeEnabled(job.tenant_id);
   stage='load_extraction_cache';const cached=await repository.storedDocuments(job);const classifier=new OpenRouterDocumentClassifier();
   const costContext={tenantId:job.tenant_id,subjectType:'audit_run' as const,subjectId:job.id};
-  const invoicePaths:string[]=[];const pods=[];const rateConfirmations=[];
+  const invoicePaths:string[]=[];const pods=[];const rateConfirmations=[];const accessorialEvidence=[];
   for(const path of paths){const id=basename(path,'.pdf');const attachment=pdfs.find(item=>item.id===id)!;const stored=cached.get(id);let documentType:DocumentType;
    if(stored)documentType=stored.documentType;else{stage='classify_document';documentType=await classifier.classify(path,attachment.filename??'',costContext);await repository.setDocumentType(job,id,documentType);}
    if(documentType==='invoice'){invoicePaths.push(path);continue;}
    if(documentType==='pod'){stage='extract_pod';const result=stored?.extraction?PodExtractionSchema.parse(stored.extraction):await new OpenRouterPodExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'pod',result);pods.push(result);continue;}
+   if(documentType==='accessorial_evidence'){stage='extract_accessorial_evidence';const result=stored?.extraction?AccessorialExtractionSchema.parse(stored.extraction):await new OpenRouterAccessorialExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'accessorial_evidence',result);accessorialEvidence.push(result);continue;}
    stage='extract_rate_confirmation';const result=stored?.extraction?RateConfirmationExtractionSchema.parse(stored.extraction):await new OpenRouterRateConfirmationExtractor().extract(path,costContext);if(!stored?.extraction)await repository.cacheSupportingExtraction(job,id,'rate_confirmation',result);rateConfirmations.push(result);
   }
   if(client instanceof TmsReceivingClient)await client.authorize();
@@ -74,7 +77,7 @@ export async function processJob(job:repository.InboundJob,client:ResendReceivin
   const pendingTmsUsage=new Map<string,string>();
   const billInvoice=async(id:string)=>{const hash=hashes.get(id)!;if(job.source==='tms')pendingTmsUsage.set(id,hash);else await repository.recordBillableInvoice(job,id,hash);};
   stage='audit_pipeline';
-  const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:invoicePaths,sourceLabels:labels,pods,rateConfirmations,reconcileSupportingDocuments:true,requireTmsEvidence:job.source==='tms',
+  const report=await runAuditPipeline({tenantId:job.tenant_id,filePaths:invoicePaths,sourceLabels:labels,pods,rateConfirmations,accessorialEvidence,reconcileSupportingDocuments:true,requireTmsEvidence:job.source==='tms',
    onTmsEvidenceValidated:async()=>{for(const [id,hash] of pendingTmsUsage)await repository.recordBillableInvoice(job,id,hash);},
    costContext,
    ctx:{run_id:job.id,carrierCache:new Map(),cacheTtlHours:Number(process.env.CARRIER_CACHE_TTL_HOURS??4)},

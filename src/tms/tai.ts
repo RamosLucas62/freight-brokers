@@ -40,7 +40,7 @@ export class TaiClient implements DocumentConnector{
   if(!/^[1-9][0-9]{0,9}$/.test(id))throw new Error('TAI_INVALID_SHIPMENT');
   const documents=z.array(z.object({documentId:z.number().int().positive(),attachmentName:z.string(),attachmentUrl:z.string().url(),attachmentType:z.string()})).max(100).parse(await readJson(await this.get(`/PublicApi/Broker/v2/Documents?shipmentId=${id}`)));
   // Invoice is a customer receivable in Tai; only explicit carrier bills and their evidence.
-  const allowed=new Set(['Carrier Bill','POD','Carrier Confirmation']);
+  const allowed=new Set(['Carrier Bill','POD','Carrier Confirmation','Accessorial Auth','Lumper Receipt','Return Receipt']);
   return {id,documents:documents.filter(doc=>allowed.has(doc.attachmentType)).map(doc=>({id:String(doc.documentId),filename:safeFilename(doc.attachmentName),revision:String(doc.documentId),download:async()=>{
    const url=new URL(doc.attachmentUrl);
    if(url.protocol!=='https:'||url.hostname!==`${this.credentials.site}.taicloud.net`||url.port||url.username||url.password||url.hash)throw new Error('TMS_UNTRUSTED_DOCUMENT_URL');

@@ -1,6 +1,6 @@
 import {errorFields} from '../observability/logger.js';
 
-const PROVIDER_STAGES=new Set(['classify_document','extract_pod','extract_rate_confirmation','audit_pipeline','list_attachments','download_attachment']);
+const PROVIDER_STAGES=new Set(['classify_document','extract_pod','extract_rate_confirmation','extract_accessorial_evidence','audit_pipeline','list_attachments','download_attachment']);
 
 export interface InboundFailureDecision {
   retry:boolean;

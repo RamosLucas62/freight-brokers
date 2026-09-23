@@ -17,9 +17,9 @@ Turvo, Aljex, AscendTMS and MercuryGate are visibly unavailable. There is no
 
 | Provider | Customer supplies in secure Settings | Automatically imported scope |
 | --- | --- | --- |
-| Tai | Site code and API key with Broker and Accounting read access | Carrier Bill, POD and Carrier Confirmation documents on shipments returned by approved accounting bills, across all five sync states. Other accounting integrations' sync flags are never changed. |
+| Tai | Site code and API key with Broker and Accounting read access | Carrier Bill, POD, Carrier Confirmation, Accessorial Auth, Lumper Receipt and Return Receipt documents on shipments returned by approved accounting bills, across all five sync states. Other accounting integrations' sync flags are never changed. |
 | McLeod PowerBroker / LoadMaster | Hosted API hostname, Company ID, bearer token, and document type IDs for carrier invoices/POD/rate confirmations | Images on delivered orders, filtered by the customer's document type mapping and returned as PDFs. Only `*.loadtracking.com` and `*.mcleodhosted.com` customer hosts are supported. Custom/on-premise hosts are unavailable. |
-| Rose Rocket | Integration service-account Request Details JSON, or organization/user/client ID and client secret | Uploaded PDF documents on orders announced by order-status webhooks. Connecting automatically registers the official webhook; previously observed orders are revisited for late attachments. Existing orders need a status event before discovery. There is no historical backfill or bill/manifest attachment discovery. |
+| Rose Rocket | Integration service-account Request Details JSON, or organization/user/client ID and client secret | Uploaded PDF documents on orders announced by order-status webhooks, their linked manifests and linked bills. Connecting automatically registers the official webhook; previously observed orders are revisited for late attachments. Existing orders need a status event before discovery. There is no historical backfill. Generated accounting PDFs are excluded because they are not original carrier evidence. |
 
 An account may need vendor API licensing/permissions before it can connect.
 Credential setup is not a consent-only OAuth flow. Missing permissions fail setup
@@ -33,9 +33,11 @@ Only then is email document intake disabled for the whole company. Credential
 changes reset this validation. This is an initial delivery check, not certification
 of all vendor data or future loads. Every TMS batch independently requires evidence
 for every new invoice before any invoice/report commit. Missing or ambiguous
-documents are listed on the job as evidence needed. Receipts and terms for additional
-charges beyond fuel are not modeled; these batches require manual review and are
-not represented as complete. Late documents create a new batch on the next scan.
+documents are listed on the job as evidence needed. Additional-charge receipts, authorizations and time records are classified separately,
+extracted with page/text evidence and cached without invoice billing. Matching load
+references distinguish absent documents from documents awaiting review. Contractual
+terms, invoice currency and charge calculations are not verified end-to-end; these
+batches still require manual review and are not represented as complete. Late documents create a new batch on the next scan.
 Unchanged incomplete batches remain in review, avoiding repeated automatic work.
 During initial validation identical PDF content remains protected by existing
 tenant/hash audit and invoice-usage uniqueness checks. Outgoing report emails remain enabled. Customers must disconnect every
@@ -85,7 +87,7 @@ unknown endpoints, document semantics, pagination or webhook authentication.
 
 ## Deployment and operation
 
-1. Apply migrations through `041_tms_evidence_validation.sql` using the normal
+1. Apply migrations through `042_accessorial_evidence.sql` using the normal
    migration process. The isolated database test does not modify production.
 2. Configure `ROSE_ROCKET_CREDENTIAL_KEY` and `TMS_CREDENTIAL_KEY` as separate,
    stable 32-byte base64url encryption keys in the deployment secret store. Keep
@@ -147,5 +149,28 @@ unsigned/illegible POD; late attachments; invoice replacement; supplementary fee
 duplicate PDFs across email and TMS; credential rotation; and disconnect. Inspect
 actual downloaded PDFs and load references against the supplier UI. Verify the
 initial-collection state and email transition, and confirm incomplete batches remain
-in review. This cannot be replaced with simulated endpoint tests. Rose bill/manifest
-attachments, historical discovery and unsupported provider APIs remain outstanding.
+in review. This cannot be replaced with simulated endpoint tests. Generated-only Rose rate confirmations, historical discovery, automatic additional-charge
+validation and unsupported provider APIs remain outstanding.
+
+## Remaining provider blockers (research checked 2026-09-22)
+
+No calls to these vendors are implemented until the actual contracts can be verified.
+No placeholder connection is enabled and no customer support ticket is created.
+
+| Provider | What is accessible | Needed to implement and test |
+| --- | --- | --- |
+| Turvo | [Public documentation portal](https://app.turvo.com/lobby/docs/) failed to load during research; [Connect](https://turvo.com/connect/) confirms API availability. | Working official specification for auth, shipment discovery, document lists/downloads, pagination, late changes and webhook verification; authorized test tenant. |
+| Aljex | [Education center](https://www.aljex.com/education-center/) links a DataSync overview whose PDF returned 404; [downloads](https://www.aljex.com/download-page/) require a password. | Licensed DataSync/API export schema, authentication, carrier-document export/download contract and authorized test tenant. |
+| AscendTMS | [EDI setup](https://ascendtms.kayako.com/article/100-edi-description-and-the-edi-setup-process) and [carrier portal guide](https://ascendtms.kayako.com/article/109-ascendportal-setup-and-configuration-in-ascendtms) describe different workflows. | Official outbound carrier-invoice/POD PDF export contract, authentication and authorized test tenant; tender/status EDI does not establish document export. |
+| MercuryGate | [Developer portal](https://qa-api-docs.mercurygate.net/) requires developer/partner access; [security overview](https://qa-api-docs.mercurygate.net/documentation/security-overview.html) describes provisioned OAuth/PKCE. | Relevant TMS document-export product contract, provisioned OAuth application/endpoints/scopes and authorized test tenant. DigitalFreight booking/labels do not establish payable-document export. |
+
+Rose traversal follows the documented [order manifests](https://roserocket.readme.io/docs/order),
+[manifest bill](https://roserocket.readme.io/docs/manifest-1) and
+[bill documents](https://roserocket.readme.io/docs/bills) relationships. Files are deduplicated
+by immutable file ID, every related object is checked against the configured organization,
+and missing/forbidden related objects fail visibly. At most 50 manifests and 100 unique
+PDFs are accepted per order. Only uploaded PDFs are imported; generated accounting bills
+must not replace original carrier invoices. Existing queued batches from the previous
+identifier scheme may need the next scan; tenant/content-hash controls prevent duplicate
+invoice audit/billing. McLeod customers must include the additional-charge document type
+IDs in their mapping to collect those files.

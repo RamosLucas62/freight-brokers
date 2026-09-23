@@ -76,3 +76,9 @@ it('retries temporary TMS download errors but not revoked credentials',()=>{
  expect(inboundFailureDecision(new Error('TMS_HTTP_401'),'list_attachments',1).retry).toBe(false);
  expect(inboundFailureDecision(new Error('fetch failed'),'download_attachment',1).retry).toBe(true);
 });
+it('Tai collects documented additional-charge evidence without importing customer invoices or carrier compliance files',async()=>{
+ const types=['Carrier Bill','POD','Carrier Confirmation','Accessorial Auth','Lumper Receipt','Return Receipt','Invoice','W9','Insurance'];
+ const fetcher=vi.fn().mockResolvedValue(Response.json(types.map((attachmentType,index)=>({documentId:index+1,attachmentName:`${attachmentType}.pdf`,attachmentUrl:'https://acme.taicloud.net/file',attachmentType}))));
+ const record=await new TaiClient({site:'acme',api_key:'secret'},fetcher).record('123');
+ expect(record.documents.map(d=>d.filename)).toEqual(types.slice(0,6).map(t=>`${t}.pdf`));
+});

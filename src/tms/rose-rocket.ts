@@ -12,7 +12,8 @@ const Document=z.object({
  externalUrl:z.string().optional(),
  file:z.object({id:Id}).passthrough().nullable().optional(),
 }).passthrough();
-const RoseObject=z.object({id:Id,orgId:Id,objectKey:ObjectKey,documents:z.array(Document).optional()}).passthrough();
+const Reference=z.object({id:Id}).passthrough();
+const RoseObject=z.object({id:Id,orgId:Id,objectKey:ObjectKey,documents:z.array(Document).max(100).optional(),manifests:z.array(Reference).max(50).nullable().optional(),bill:Reference.nullable().optional()}).passthrough();
 export type RoseObject=z.infer<typeof RoseObject>;
 export type RoseDocument=z.infer<typeof Document>;
 
@@ -90,8 +91,9 @@ export class RoseRocketClient {
  }
  async getObject(key:RoseObjectKey,id:string):Promise<RoseObject>{
   ObjectKey.parse(key);
-  const response=await this.request(`/api/v2/platformModel/objects/${pathId(id)}?objectKey=${key}&paths=documents.file,documents.externalUrl`);
-  const object=RoseObject.parse(await response.json());
+  const related=key==='order'?',manifests':key==='manifest'?',bill':'';
+  const response=await this.request(`/api/v2/platformModel/objects/${pathId(id)}?objectKey=${key}&paths=documents.file,documents.externalUrl${related}`);
+  const object=RoseObject.parse(await readJson(response));
   if(object.orgId!==this.orgId||object.id!==id||object.objectKey!==key)throw new Error('ROSE_OBJECT_SCOPE_MISMATCH');
   return object;
  }
