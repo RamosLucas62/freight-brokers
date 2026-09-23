@@ -1,6 +1,6 @@
 import {v5 as uuidv5} from 'uuid';
 import {z} from 'zod';
-import {getSupabaseClient} from '../config/supabase.js';
+import {getSupabaseClient,operationalDatabaseError} from '../config/supabase.js';
 import {decryptTmsCredentials} from './credentials.js';
 import {decryptRoseCredentials} from './rose-rocket.credentials.js';
 import {RoseRocketClient} from './rose-rocket.js';
@@ -10,7 +10,7 @@ import {McLeodClient} from './mcleod.js';
 import type {DocumentConnector,TmsDocument} from './documents.js';
 import type {InboundJob} from '../inbound/repository.js';
 import type {Attachment} from '../inbound/resend.js';
-import {failure} from '../observability/logger.js';
+import {failure,warn,info,errorFields} from '../observability/logger.js';
 
 export interface SyncConnection {tenant_id:string;provider:string;credentials_ciphertext:string;connection_version:string;sync_claim:string;}
 const namespace='8a6b571e-78e5-4916-8482-adbb72b3b466';
@@ -43,15 +43,42 @@ export async function syncConnection(connection:SyncConnection,client?:DocumentC
   }
  }catch(error){code=error instanceof Error&&/^[A-Z][A-Z0-9_]{2,80}$/.test(error.message)?error.message:'TMS_SYNC_FAILED';failure('tms.sync.failed',new Error(code),{tenant_id:connection.tenant_id,provider:connection.provider});}
  const finished=await db.rpc('finish_tms_coverage',{p_tenant:connection.tenant_id,p_provider:connection.provider,p_version:connection.connection_version,p_claim:connection.sync_claim,p_error:code,p_records:code?null:observed});
- if(finished.error)throw new Error('TMS_SYNC_UPDATE_FAILED');
+ if(finished.error)throw operationalDatabaseError('TMS_SYNC_UPDATE_FAILED',finished.error);
 }
+/** Backoff and alert suppression are local to this worker process. Warnings
+ * retain each retry in logs without emitting another Google Chat error alert. */
 export function startTmsSyncWorker(){
- let stopped=false,running:Promise<void>|null=null;
- const tick=()=>{if(stopped||running)return;running=(async()=>{
-  try{const result=await getSupabaseClient().rpc('claim_tms_sync');if(result.error)throw new Error('TMS_CLAIM_FAILED');if(result.data?.[0])await syncConnection(result.data[0]);}
-  catch(error){failure('tms.sync.worker_failed',error);}
- })().finally(()=>{running=null;});};
- const timer=setInterval(tick,5000);tick();return async()=>{stopped=true;clearInterval(timer);await running;};
+ const normalDelay=5000,alertInterval=15*60_000;
+ let stopped=false,running:Promise<void>|null=null,timer:ReturnType<typeof setTimeout>|undefined;
+ let attempts=0,lastFingerprint='',lastAlertAt=0,suppressed=0;
+ const tick=()=>{
+  if(stopped||running)return;
+  let delay=normalDelay;
+  running=(async()=>{
+   try{
+    const result=await getSupabaseClient().rpc('claim_tms_sync');
+    if(result.error)throw operationalDatabaseError('TMS_CLAIM_FAILED',result.error);
+    if(result.data?.[0])await syncConnection(result.data[0]);
+    if(attempts)info('tms.sync.worker_recovered',{failed_attempts:attempts,suppressed_alerts:suppressed});
+    attempts=0;lastFingerprint='';lastAlertAt=0;suppressed=0;
+   }catch(error){
+    attempts++;
+    delay=Math.min(300_000,15_000*2**Math.min(attempts-1,5));
+    const safe=errorFields(error);
+    const fingerprint=JSON.stringify([safe.error_code,safe.provider_code,safe.provider_reason]);
+    const context={attempt:attempts,retry_in_seconds:delay/1000,suppressed_alerts:suppressed};
+    if(fingerprint!==lastFingerprint||Date.now()-lastAlertAt>=alertInterval){
+     failure('tms.sync.worker_failed',error,context);
+     lastFingerprint=fingerprint;lastAlertAt=Date.now();suppressed=0;
+    }else{
+     suppressed++;
+     warn('tms.sync.worker_retry',{...safe,...context,suppressed_alerts:suppressed});
+    }
+   }
+  })().finally(()=>{running=null;if(!stopped)timer=setTimeout(tick,delay);});
+ };
+ tick();
+ return async()=>{stopped=true;if(timer)clearTimeout(timer);await running;};
 }
 
 /** Read references from a service-role-created job, then refetch links using that

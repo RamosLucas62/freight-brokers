@@ -6,6 +6,7 @@ const retryDelays=[250,1000,2500];
 const planLabels:Record<string,string>={core:'Core',growth:'Growth',scale:'Scale'};
 const periodLabels:Record<string,string>={monthly:'Mensal',semiannual:'Semestral',annual:'Anual'};
 const errorLocations:Record<string,string>={
+ 'tms.sync.worker_failed':'Sincronização automática dos TMS',
  'checkout.public.failed':'Checkout público',
  'free_audit.checkout.failed':'Checkout da auditoria gratuita',
  'free_audit.submission.failed':'Envio da auditoria gratuita',
@@ -80,6 +81,9 @@ export async function notifyOperationalError(record:Record<string,unknown>,reque
   '🚨 *Erro no Freight Audit*','',
   `*Onde aconteceu:* ${location}`,
   `*Código:* ${code}`,
+  compact(record.provider_code)?`*Código do provedor:* ${compact(record.provider_code)}`:undefined,
+  compact(record.provider_reason)?`*Diagnóstico:* ${compact(record.provider_reason)}`:undefined,
+  compact(record.retry_in_seconds)?`*Nova tentativa em:* ${compact(record.retry_in_seconds)} segundos`:undefined,
   `*ID do erro:* ${errorId}`,
   operationId?`*ID da operação:* ${operationId}`:undefined,
   compact(record.stage)?`*Etapa técnica:* ${compact(record.stage)}`:undefined,
