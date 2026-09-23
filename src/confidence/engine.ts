@@ -10,7 +10,7 @@ import type {
 } from '../types/invoice.types.js';
 import {normalizeCompanyName} from '../normalization/index.js';
 
-const FIELD_NAMES=(['numero_fatura','numero_carga','carrier_name','mc_number','dot_number','data_carga','data_fatura','valor_total','origem','destino','dados_bancarios'] as const);
+const FIELD_NAMES=(['currency','numero_fatura','numero_carga','carrier_name','mc_number','dot_number','data_carga','data_fatura','valor_total','origem','destino','dados_bancarios'] as const);
 type FieldName=typeof FIELD_NAMES[number];
 
 export interface ConfidenceInput {
@@ -42,6 +42,7 @@ function evidenceSupports(value:unknown,evidence:FieldEvidence|null|undefined):b
 
 function formatValid(field:FieldName,value:unknown):boolean{
  if(!present(value))return false;
+ if(field==='currency')return value==='USD'||value==='CAD';
  if(field==='valor_total')return typeof value==='number'&&Number.isFinite(value)&&value>0;
  if(field==='mc_number')return /^\d{3,8}$/.test(digits(value));
  if(field==='dot_number')return /^\d{3,9}$/.test(digits(value));
@@ -80,7 +81,7 @@ function sampled(tenantId:string,sourceId:string,rate:number):boolean{
 
 export function verifyInvoice(input:ConfidenceInput):InvoiceVerification{
  const history=input.history??[];const configured=Number(process.env.CONFIDENCE_VERIFIED_THRESHOLD??'0.92');const threshold=Number.isFinite(configured)&&configured>=0&&configured<=1?configured:0.92;
- const fields=Object.fromEntries(FIELD_NAMES.map(field=>[field,verifyField(field,input.fields[field],input.evidence?.[field],history,threshold)]));
+ const fields=Object.fromEntries(FIELD_NAMES.filter(field=>field!=='currency'||input.fields.currency!=null).map(field=>[field,verifyField(field,input.fields[field],input.evidence?.[field],history,threshold)]));
  const reasons:string[]=[];
  for(const field of ['numero_fatura','data_fatura','valor_total','carrier_name'] as const){if(fields[field].status!=='verified')reasons.push(`${field}:${fields[field].status}`);}
  // MC/DOT identifiers are optional on an invoice. When one is printed, however,

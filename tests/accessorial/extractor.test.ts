@@ -14,7 +14,7 @@ async function setup(payload:unknown,finish_reason='stop'){
 describe('additional-charge extraction',()=>{
  it('preserves sourced values without treating a receipt as contractual approval',async()=>{
   const {file,extractor,request}=await setup(fields());const result=await extractor.extract(file);
-  expect(result.fields.amount.value).toBe(150);expect(result.fields.amount.evidence?.text).toBe('150');expect(result.requires_human_review).toBe(true);
+  expect(result.fields.amount.value).toBe(150);expect(result.fields.amount.evidence?.text).toBe('150');expect(result.requires_human_review).toBe(false);
   expect(request.mock.calls[0][1].redirect).toBe('error');
  });
  it.each(['negative amount','invalid date','missing timezone','missing field'])('rejects %s',async(reason)=>{

@@ -19,25 +19,36 @@ Turvo, Aljex, AscendTMS and MercuryGate are visibly unavailable. There is no
 | --- | --- | --- |
 | Tai | Site code and API key with Broker and Accounting read access | Carrier Bill, POD, Carrier Confirmation, Accessorial Auth, Lumper Receipt and Return Receipt documents on shipments returned by approved accounting bills, across all five sync states. Other accounting integrations' sync flags are never changed. |
 | McLeod PowerBroker / LoadMaster | Hosted API hostname, Company ID, bearer token, and document type IDs for carrier invoices/POD/rate confirmations | Images on delivered orders, filtered by the customer's document type mapping and returned as PDFs. Only `*.loadtracking.com` and `*.mcleodhosted.com` customer hosts are supported. Custom/on-premise hosts are unavailable. |
-| Rose Rocket | Integration service-account Request Details JSON, or organization/user/client ID and client secret | Uploaded PDF documents on orders announced by order-status webhooks, their linked manifests and linked bills. Connecting automatically registers the official webhook; previously observed orders are revisited for late attachments. Existing orders need a status event before discovery. There is no historical backfill. Generated accounting PDFs are excluded because they are not original carrier evidence. |
+| Rose Rocket | Integration service-account Request Details JSON, or organization/user/client ID and client secret | Uploaded PDF documents on orders announced by order-status webhooks, their linked manifests and linked bills. Connecting automatically registers the official webhook; previously observed orders are revisited for late attachments. Optional Orders board ID enables bounded historical discovery (up to 999 orders). Without it, webhook collection continues but coverage cannot validate. Referenced generated manifest rate-confirmation PDFs are imported with content hashes. Generated accounting bills and unsigned BOL templates are excluded. |
 
 An account may need vendor API licensing/permissions before it can connect.
 Credential setup is not a consent-only OAuth flow. Missing permissions fail setup
 or produce a visible synchronization error; they cannot be provisioned by this app.
 Existing verified Tai accounts remain paused until the owner selects **Enable
 automatic import**. Existing Rose accounts reconnect to register the new webhook.
-Credential verification starts collection but leaves email available. A completed
-TMS audit containing at least one invoice with high-confidence matched signed POD,
-delivery date and rate confirmation/authorized total validates the initial intake.
-Only then is email document intake disabled for the whole company. Credential
-changes reset this validation. This is an initial delivery check, not certification
-of all vendor data or future loads. Every TMS batch independently requires evidence
-for every new invoice before any invoice/report commit. Missing or ambiguous
-documents are listed on the job as evidence needed. Additional-charge receipts, authorizations and time records are classified separately,
-extracted with page/text evidence and cached without invoice billing. Matching load
-references distinguish absent documents from documents awaiting review. Contractual
-terms, invoice currency and charge calculations are not verified end-to-end; these
-batches still require manual review and are not represented as complete. Late documents create a new batch on the next scan.
+Credential verification starts collection but leaves email available. A complete,
+successful discovery scan seals the current record/document bundle snapshot, including
+records with no documents. Every discovered record must have a completed evidence-
+validated job before the connection is marked ready. Every active connection must be
+ready before company email intake turns off. A single successful batch cannot qualify
+a larger incomplete collection. Credential changes clear both snapshot and validation.
+Already validated connections do not reopen email after transient failures. This proves
+coverage of the configured API scope, not undocumented/filtered-out supplier data.
+
+Each TMS batch binds readable invoice, signed POD/delivery date and rate confirmation
+to the load. Additional charges are now checked against explicit currency, amount,
+service date and authorization. Fixed LUMPER/LIFTGATE/REDELIVERY requires a matching
+receipt plus an explicit contract line or dated carrier-specific authorization.
+DETENTION/LAYOVER requires a time record with timezone, explicit hourly rate, free
+minutes and rounding-up increment; any printed cap is applied. Other rounding methods,
+TONU/OTHER, ambiguous/repeated charges, missing currency, missing terms and unsupported
+service-date scenarios remain in review. No industry rate/free-time defaults are assumed.
+These checks verify evidence and calculations; they do not initiate payment. Results and
+source references appear in report JSON and portal details. Missing evidence appears on
+the job. Invoice currency and each charge's source evidence are retained with the invoice.
+
+Historical invoice hashes are rechecked against current supporting evidence without
+another invoice extraction or invoice-usage charge. Late documents create a new batch on the next scan.
 Unchanged incomplete batches remain in review, avoiding repeated automatic work.
 During initial validation identical PDF content remains protected by existing
 tenant/hash audit and invoice-usage uniqueness checks. Outgoing report emails remain enabled. Customers must disconnect every
@@ -87,7 +98,7 @@ unknown endpoints, document semantics, pagination or webhook authentication.
 
 ## Deployment and operation
 
-1. Apply migrations through `042_accessorial_evidence.sql` using the normal
+1. Apply migrations through `044_tms_coverage_validation.sql` using the normal
    migration process. The isolated database test does not modify production.
 2. Configure `ROSE_ROCKET_CREDENTIAL_KEY` and `TMS_CREDENTIAL_KEY` as separate,
    stable 32-byte base64url encryption keys in the deployment secret store. Keep
@@ -149,8 +160,8 @@ unsigned/illegible POD; late attachments; invoice replacement; supplementary fee
 duplicate PDFs across email and TMS; credential rotation; and disconnect. Inspect
 actual downloaded PDFs and load references against the supplier UI. Verify the
 initial-collection state and email transition, and confirm incomplete batches remain
-in review. This cannot be replaced with simulated endpoint tests. Generated-only Rose rate confirmations, historical discovery, automatic additional-charge
-validation and unsupported provider APIs remain outstanding.
+in review. This cannot be replaced with simulated endpoint tests. Live supplier compatibility, historical boards with 1,000 or more results, unsupported
+charge terms and unavailable provider APIs remain outstanding.
 
 ## Remaining provider blockers (research checked 2026-09-22)
 
@@ -169,8 +180,27 @@ Rose traversal follows the documented [order manifests](https://roserocket.readm
 [bill documents](https://roserocket.readme.io/docs/bills) relationships. Files are deduplicated
 by immutable file ID, every related object is checked against the configured organization,
 and missing/forbidden related objects fail visibly. At most 50 manifests and 100 unique
-PDFs are accepted per order. Only uploaded PDFs are imported; generated accounting bills
+PDFs are accepted per order. Uploaded PDFs and referenced generated manifest rate confirmations are imported; generated accounting bills
 must not replace original carrier invoices. Existing queued batches from the previous
 identifier scheme may need the next scan; tenant/content-hash controls prevent duplicate
 invoice audit/billing. McLeod customers must include the additional-charge document type
 IDs in their mapping to collect those files.
+
+## Historical discovery and generated-document limits
+
+Rose [record search](https://roserocket.readme.io/reference/post_objects-search)
+requires a board ID. The published schema provides a limit and an approximate total,
+but no pagination cursor/offset. Setup accepts an optional `history_board_id`, stored
+with the encrypted credentials. It must identify the customer's complete intended
+orders scope. Search validates that results are orders and rejects duplicate IDs,
+a full 1,000-record page, or a total/count mismatch instead of claiming full coverage.
+Every order is subsequently fetched with organization checks. An oversized board needs
+a documented vendor pagination contract before its history can be declared complete.
+
+[Generated manifest rate confirmations](https://roserocket.readme.io/docs/documents)
+are imported only from the exact returned manifest PDF path. Their downloaded bytes
+are hashed so mutable generated documents cannot silently change while a job is queued.
+An uploaded typed rate confirmation takes precedence to avoid duplicate contract evidence.
+PDFs generated solely as accounting bills or unsigned BOL templates do not substitute
+for an original carrier invoice or signed POD. Production rollout still requires real
+supplier acceptance; no live credentials were available during implementation.

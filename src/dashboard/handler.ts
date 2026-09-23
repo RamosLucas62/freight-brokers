@@ -433,9 +433,9 @@ export async function dashboard(req:IncomingMessage,res:ServerResponse,limiter:R
   if(process.env.REQUIRE_MFA_SENSITIVE==='true'&&aal!=='aal2'){send(403,{error:'Verify your authenticator before connecting Rose Rocket.'});return true;}
   if(roseTenant?.status!=='active'){send(409,{error:'This company must be active to connect Rose Rocket.'});return true;}
   if(!(await take({scope:'rose-connect-user',key:user.user.id,limit:3,windowSeconds:3600,failClosed:true})))return true;
-  const input=z.object({org_id:uuid,user_id:uuid,client_id:z.string().trim().min(1).max(512),client_secret:z.string().min(1).max(2048)}).parse(await body(req));
-  const account={orgId:input.org_id,userId:input.user_id,clientId:input.client_id,clientSecret:input.client_secret};
-  try{await new RoseRocketClient({account}).verifyAccess();}
+  const input=z.object({org_id:uuid,user_id:uuid,history_board_id:uuid.optional(),client_id:z.string().trim().min(1).max(512),client_secret:z.string().min(1).max(2048)}).parse(await body(req));
+  const account={orgId:input.org_id,userId:input.user_id,clientId:input.client_id,clientSecret:input.client_secret,historyBoardId:input.history_board_id};
+  try{const rose=new RoseRocketClient({account});await rose.verifyAccess();if(account.historyBoardId)await rose.historicalOrderIds();}
   catch{send(422,{error:'Rose Rocket could not verify this integration account. Check the four values and its API access.'});return true;}
   const previous=await serviceDb.from('audit_rose_connections').select('org_id').eq('tenant_id',tenant).maybeSingle();
   if(previous.error)throw previous.error;

@@ -12,6 +12,7 @@ const object = (properties: Record<string, unknown>) => ({
   type: 'object', properties, required: Object.keys(properties), additionalProperties: false,
 });
 const fields = object({
+  currency:{type:['string','null'],enum:['USD','CAD',null]},
   numero_fatura: nullableText, numero_carga: nullableText, carrier_name: nullableText,
   mc_number: nullableText, dot_number: nullableText, data_carga: nullableText,
   data_fatura: nullableText, valor_total: { type: ['number', 'null'] },
@@ -23,6 +24,7 @@ const fields = object({
 });
 const evidenceItem=object({page:{type:['integer','null'],minimum:1},text:nullableText});
 const evidence=object({
+  currency:evidenceItem,
   numero_fatura:evidenceItem,numero_carga:evidenceItem,carrier_name:evidenceItem,
   mc_number:evidenceItem,dot_number:evidenceItem,data_carga:evidenceItem,
   data_fatura:evidenceItem,valor_total:evidenceItem,origem:evidenceItem,
@@ -32,14 +34,14 @@ const schema = object({
   invoice_count: { type: 'integer', minimum: 0 }, fields, evidence,
   accessorials: { type: 'array', items: object({
     tipo: { type: 'string' }, descricao: { type: 'string' }, valor: { type: 'number' },
-    pagina: { type: 'integer', minimum: 1 },
+    pagina: { type: 'integer', minimum: 1 }, evidence:evidenceItem,
   }) },
 });
 const payloadSchema = z.object({
   invoice_count: z.number().int().nonnegative(),
   fields: ExtractionResultSchema.shape.fields,
   evidence: z.record(z.object({page:z.number().int().positive().nullable(),text:z.string().max(500).nullable()})),
-  accessorials: z.array(z.object({ tipo: z.string(), descricao: z.string(), valor: z.number(), pagina: z.number().int().positive() })),
+  accessorials: z.array(z.object({ tipo: z.string(), descricao: z.string(), valor: z.number(), pagina: z.number().int().positive(), evidence:z.object({page:z.number().int().positive().nullable(),text:z.string().max(500).nullable()}).optional() })),
 });
 const envelopeSchema = z.object({
   id: z.string().optional(), model: z.string().optional(),
@@ -58,7 +60,8 @@ For every field, provide a short verbatim source snippet and 1-based PDF page in
 Use null page and text when the field is absent or the source cannot be located. Never invent evidence.
 Extract load number/date, origin/destination and accessorial charges only when stated.
 Accessorials are ONLY extra charges, never base freight, line haul, subtotal, tax or invoice total.
-Use tipo FUEL_SURCHARGE, DETENTION, LAYOVER, LIFTGATE, TONU or OTHER for each extra charge.
+Currency must be explicitly USD or CAD, otherwise null; a dollar symbol alone is insufficient. Include verbatim evidence for each accessorial amount and type.
+Use tipo FUEL_SURCHARGE, LUMPER, REDELIVERY, DETENTION, LAYOVER, LIFTGATE, TONU or OTHER for each extra charge.
 Accessorial pages are 1-based; omit a charge if its amount or page cannot be established.
 If there is not exactly one invoice, return its count with null fields and an empty accessorials list.`;
 

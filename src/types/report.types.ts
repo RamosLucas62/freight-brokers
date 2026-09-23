@@ -9,6 +9,7 @@ export interface ReportException {
 }
 
 export interface AuditReport {
+  accessorial_checks?:Array<import('../accessorial/verify.js').AccessorialCheck&{invoice_id:string}>;
   document_coverage?:{validated_invoices:number;checks:string[];scope:'basic_freight_evidence'};
   tenant_id?: string;
   skipped_files?: string[];

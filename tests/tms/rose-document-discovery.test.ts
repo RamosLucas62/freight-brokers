@@ -41,3 +41,22 @@ describe('Rose related evidence discovery',()=>{
   await expect(connector.record(id(3))).rejects.toThrow('ROSE_DOCUMENT_LIMIT');
  });
 });
+it('imports only generated manifest rate PDFs and fingerprints their actual bytes',async()=>{
+ const fetcher=vi.fn(async(url:unknown)=>{
+  const path=String(url);if(path.endsWith('/oauth/token'))return Response.json({access_token:'token'});
+  if(path.includes('/documents/'))return new Response('%PDF-rate-version-one');
+  if(path.includes(`/objects/${id(3)}`))return Response.json({id:id(3),orgId:id(1),objectKey:'order',manifests:[{id:id(4)}]});
+  return Response.json({id:id(4),orgId:id(1),objectKey:'manifest',documents:[{id:id(10),externalUrl:`/api/v2/platformModel/documents/manifest/${id(4)}/rate_con/pdf`},{id:id(11),externalUrl:`/api/v2/platformModel/documents/invoice/${id(5)}/pdf`}]});
+ });
+ const record=await new RoseDocumentConnector(new RoseRocketClient({account,fetcher})).record(id(3));
+ expect(record.documents).toHaveLength(1);expect(record.documents[0].filename).toContain('rate_confirmation');expect(record.documents[0].revision).toMatch(/^[a-f0-9]{64}$/);expect((await record.documents[0].download()).toString()).toBe('%PDF-rate-version-one');
+ expect(fetcher.mock.calls.some(c=>String(c[0]).includes('/documents/invoice/'))).toBe(false);
+});
+it('uses documented bounded board search for historical order discovery',async()=>{
+ const fetcher=vi.fn(async(url:unknown,options:any)=>{if(String(url).endsWith('/oauth/token'))return Response.json({access_token:'token'});expect(JSON.parse(options.body)).toEqual({boardId:id(9),orderByPath:'id',orderByDirection:'asc',limit:1000});return Response.json({total:1,results:[{id:id(3),objectKey:'order'}]});});
+ expect(await new RoseRocketClient({account:{...account,historyBoardId:id(9)},fetcher}).historicalOrderIds()).toEqual([id(3)]);
+});
+it.each([{total:2,results:[{id:id(3),objectKey:'order'}]},{total:1,results:[{id:id(3),objectKey:'invoice'}]},{total:2,results:[{id:id(3),objectKey:'order'},{id:id(3),objectKey:'order'}]}])('fails closed on incomplete or incorrect historical results',async payload=>{
+ const fetcher=vi.fn(async(url:unknown)=>String(url).endsWith('/oauth/token')?Response.json({access_token:'token'}):Response.json(payload));
+ await expect(new RoseRocketClient({account:{...account,historyBoardId:id(9)},fetcher}).historicalOrderIds()).rejects.toThrow();
+});

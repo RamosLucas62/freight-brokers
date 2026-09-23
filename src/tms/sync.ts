@@ -29,18 +29,20 @@ export function documentBatch(connection:SyncConnection,recordId:string,document
  return {batch,snapshot};
 }
 export async function syncConnection(connection:SyncConnection,client?:DocumentConnector){
- const db=getSupabaseClient();let code:string|null=null;
+ const db=getSupabaseClient();let code:string|null=null;const observed:Array<{record:string;batch:string|null}>=[];
  try{
   const started=Date.now();
   for await(const record of (client??connector(connection)).records()){
    if(Date.now()-started>10*60_000)throw new Error('TMS_SYNC_TIME_LIMIT');
-   if(!record.documents.length)continue;
+   if(observed.length>=10000)throw new Error('TMS_COVERAGE_LIMIT');
+   if(!record.documents.length){observed.push({record:record.id,batch:null});continue;}
    const {batch,snapshot}=documentBatch(connection,record.id,record.documents);
    const result=await db.rpc('enqueue_tms_documents',{p_tenant:connection.tenant_id,p_provider:connection.provider,p_version:connection.connection_version,p_claim:connection.sync_claim,p_batch:batch,p_record:record.id,p_documents:snapshot});
    if(result.error)throw new Error('TMS_ENQUEUE_FAILED');
+   observed.push({record:record.id,batch});
   }
  }catch(error){code=error instanceof Error&&/^[A-Z][A-Z0-9_]{2,80}$/.test(error.message)?error.message:'TMS_SYNC_FAILED';failure('tms.sync.failed',new Error(code),{tenant_id:connection.tenant_id,provider:connection.provider});}
- const finished=await db.rpc('finish_tms_sync',{p_tenant:connection.tenant_id,p_provider:connection.provider,p_version:connection.connection_version,p_claim:connection.sync_claim,p_error:code});
+ const finished=await db.rpc('finish_tms_coverage',{p_tenant:connection.tenant_id,p_provider:connection.provider,p_version:connection.connection_version,p_claim:connection.sync_claim,p_error:code,p_records:code?null:observed});
  if(finished.error)throw new Error('TMS_SYNC_UPDATE_FAILED');
 }
 export function startTmsSyncWorker(){

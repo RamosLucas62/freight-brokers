@@ -10,6 +10,7 @@ const DadosBancariosSchema = z.object({
 }).nullable();
 
 const AccessorialSchema = z.object({
+  evidence:z.object({page:z.number().int().positive().nullable(),text:z.string().max(1000).nullable()}).nullable().optional(),
   tipo:       z.string(),
   descricao:  z.string(),
   valor:      z.number(),
@@ -21,6 +22,7 @@ const AccessorialSchema = z.object({
 });
 
 const InvoiceFieldsSchema = z.object({
+  currency:z.enum(['USD','CAD']).nullable().optional(),
   numero_fatura:   z.string().nullable(),
   numero_carga:    z.string().nullable(),
   carrier_name:    z.string().nullable(),

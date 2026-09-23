@@ -23,6 +23,7 @@ export interface RoseRocketServiceAccount {
  clientSecret:string;
  orgId:string;
  userId:string;
+ historyBoardId?:string;
 }
 export interface RoseRocketClientOptions {
  account:RoseRocketServiceAccount;
@@ -31,7 +32,7 @@ export interface RoseRocketClientOptions {
  authOrigin?:string;
 }
 
-const MAX_PDF_BYTES=40*1024*1024;
+const MAX_PDF_BYTES=20*1024*1024;
 function origin(value:string,expectedHost:string):string{
  const url=new URL(value);
  const allowedHost=expectedHost==='network.roserocket.com'
@@ -50,12 +51,14 @@ export class RoseRocketClient {
  private readonly authOrigin:string;
  private token?:{value:string;expiresAt:number};
  readonly orgId:string;
+ readonly historyBoardId?:string;
  constructor(private readonly options:RoseRocketClientOptions){
   this.fetcher=options.fetcher??fetch;
   this.apiOrigin=origin(options.apiOrigin??'https://network.roserocket.com','network.roserocket.com');
   this.authOrigin=origin(options.authOrigin??'https://a.roserocket.com','a.roserocket.com');
   this.orgId=Id.parse(options.account.orgId);
   Id.parse(options.account.userId);
+  this.historyBoardId=options.account.historyBoardId?Id.parse(options.account.historyBoardId):undefined;
   if(!options.account.clientId||!options.account.clientSecret)throw new Error('ROSE_CREDENTIALS_REQUIRED');
  }
  private async accessToken():Promise<string>{
@@ -96,6 +99,17 @@ export class RoseRocketClient {
   const object=RoseObject.parse(await readJson(response));
   if(object.orgId!==this.orgId||object.id!==id||object.objectKey!==key)throw new Error('ROSE_OBJECT_SCOPE_MISMATCH');
   return object;
+ }
+ /** Bounded historical board discovery; the published search contract has no
+  * pagination cursor. Never infer an offset or silently truncate a full page. */
+ async historicalOrderIds():Promise<string[]>{
+  if(!this.historyBoardId)throw new Error('ROSE_HISTORY_BOARD_REQUIRED');
+  const send=async()=>this.fetcher(`${this.apiOrigin}/api/v2/platformModel/objects/search`,{method:'POST',redirect:'error',headers:{Authorization:`Bearer ${await this.accessToken()}`,'Content-Type':'application/json'},body:JSON.stringify({boardId:this.historyBoardId,orderByPath:'id',orderByDirection:'asc',limit:1000}),signal:AbortSignal.timeout(30_000)});
+  let response=await send();if(response.status===401){await response.body?.cancel();this.token=undefined;response=await send();}
+  const result=z.object({total:z.number().int().nonnegative(),results:z.array(z.object({id:Id,objectKey:z.literal('order')})).max(1000)}).parse(await readJson(response));
+  if(result.results.length>=1000||result.total!==result.results.length)throw new Error('ROSE_HISTORY_PAGINATION_REQUIRED');
+  const ids=result.results.map(r=>r.id);if(new Set(ids).size!==ids.length)throw new Error('ROSE_HISTORY_DUPLICATE_RECORDS');
+  return ids;
  }
  async registerDocumentWebhook(url:string):Promise<void>{
   const response=await this.fetcher(`${this.apiOrigin}/api/v2/platformModel/objects`,{

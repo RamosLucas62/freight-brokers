@@ -147,3 +147,9 @@ it('reports missing evidence even when no supporting documents were received',as
  const report=await runAuditPipeline({...options(),reconcileSupportingDocuments:true});
  expect(report.reconciliation?.unverifiable).toBe(1);expect(report.warnings?.some(value=>value.includes('POD and rate confirmation'))).toBe(true);
 });
+it('does not let a historical invoice bypass the evidence gate in a new TMS bundle',async()=>{
+ const opts=options();let saved:InvoiceRecord[]=[];opts.store.commit=vi.fn(async(invoices?:InvoiceRecord[])=>{saved=invoices!;});await runAuditPipeline(opts);
+ const retry={...options(saved),requireTmsEvidence:true};const extract=vi.spyOn(retry.extractor,'extract');
+ await expect(runAuditPipeline(retry)).rejects.toMatchObject({message:'TMS_EVIDENCE_INCOMPLETE'});
+ expect(extract).not.toHaveBeenCalled();expect(retry.store.commit).not.toHaveBeenCalled();
+});
