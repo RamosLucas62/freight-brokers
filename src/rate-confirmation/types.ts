@@ -9,6 +9,7 @@ export interface RateConfirmationAccessorial {
 }
 
 export interface RateConfirmationFields {
+ currency?:PodField<'USD'|'CAD'>;
  load_number:PodField<string>;
  bol_number:PodField<string>;
  carrier_name:PodField<string>;

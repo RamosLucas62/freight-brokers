@@ -7,6 +7,7 @@ export interface DadosBancarios {
 }
 
 export interface AccessorialLineItem {
+  evidence?: FieldEvidence | null;
   tipo:       string;   // FUEL_SURCHARGE | DETENTION | LAYOVER | LIFTGATE | TONU | OTHER
   descricao:  string;
   valor:      number;
@@ -40,6 +41,7 @@ export interface InvoiceVerification {
 }
 
 export interface InvoiceFields {
+  currency?: 'USD' | 'CAD' | null;
   numero_fatura:   string | null;
   numero_carga:    string | null;
   carrier_name:    string | null;
@@ -63,6 +65,7 @@ export interface InvoiceExtractionResult {
 }
 
 export interface InvoiceRecord {
+  currency?: 'USD' | 'CAD' | null;
   tenant_id?: string;
   document_hash?: string;
   id:               string;

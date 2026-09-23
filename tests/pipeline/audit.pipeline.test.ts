@@ -97,19 +97,21 @@ describe('audit transaction boundary', () => {
       requires_human_review: false,
       raw: {},
     };
-    const opts = { ...options(), pods: [pod], rateConfirmations: [rate], reconcileSupportingDocuments: true };
+    const opts = { ...options(), pods: [pod], rateConfirmations: [rate], reconcileSupportingDocuments: true,requireTmsEvidence:true };
+    const originalExtract=opts.extractor.extract.bind(opts.extractor);opts.extractor.extract=async file=>({...await originalExtract(file),field_evidence:{numero_carga:{page:1,text:'LOAD-9876'}}});
     const report = await runAuditPipeline(opts);
     expect(report.exceptions).toEqual(expect.arrayContaining([expect.objectContaining({ tipo_regra: 'RATE_CONFIRMATION_MISMATCH' })]));
     expect(report.reconciliation).toMatchObject({ divergent: 1, supporting_documents: 2 });
+    expect(report.document_coverage).toMatchObject({validated_invoices:1,scope:'basic_freight_evidence'});
     expect((opts.store.commit.mock.calls as any)[0][1]).toEqual(expect.arrayContaining([expect.objectContaining({ tipo_regra: 'RATE_CONFIRMATION_MISMATCH' })]));
     expect((opts.store.commit.mock.calls as any)[0][2].reconciliation).toMatchObject({ divergent: 1, supporting_documents: 2 });
   });
-  it('does not mark a standalone invoice unverifiable when no supporting documents were supplied',async()=>{
+  it('distinguishes invoice field confidence from missing supporting evidence',async()=>{
     const opts={...options(),reconcileSupportingDocuments:true,pods:[],rateConfirmations:[]};
     const report=await runAuditPipeline(opts);
     expect(report.confidence).toMatchObject({unverifiable:0});
-    expect(report.reconciliation).toEqual({matched:0,divergent:0,unverifiable:0,unbilled_revenue:0,supporting_documents:0});
-    expect(report.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining('matching POD')]));
+    expect(report.reconciliation).toEqual({matched:0,divergent:0,unverifiable:1,unbilled_revenue:0,supporting_documents:0});
+    expect(report.warnings).toEqual(expect.arrayContaining([expect.stringContaining('matching POD')]));
   });
 });
 
@@ -134,4 +136,20 @@ describe('tenant isolation', () => {
     expect(report.tenant_id).toBe(opts.tenantId);
     expect((opts.store.commit.mock.calls as any)[0][0][0].tenant_id).toBe(opts.tenantId);
   });
+});
+
+it('does not commit a TMS invoice or report without the required matching evidence',async()=>{
+ const opts={...options(),requireTmsEvidence:true,onTmsEvidenceValidated:vi.fn(async()=>{})};
+ await expect(runAuditPipeline(opts)).rejects.toMatchObject({message:'TMS_EVIDENCE_INCOMPLETE',issues:expect.arrayContaining([expect.objectContaining({missing:expect.arrayContaining(['POD','RATE_CONFIRMATION'])})])});
+ expect(opts.store.commit).not.toHaveBeenCalled();expect(opts.onTmsEvidenceValidated).not.toHaveBeenCalled();
+});
+it('reports missing evidence even when no supporting documents were received',async()=>{
+ const report=await runAuditPipeline({...options(),reconcileSupportingDocuments:true});
+ expect(report.reconciliation?.unverifiable).toBe(1);expect(report.warnings?.some(value=>value.includes('POD and rate confirmation'))).toBe(true);
+});
+it('does not let a historical invoice bypass the evidence gate in a new TMS bundle',async()=>{
+ const opts=options();let saved:InvoiceRecord[]=[];opts.store.commit=vi.fn(async(invoices?:InvoiceRecord[])=>{saved=invoices!;});await runAuditPipeline(opts);
+ const retry={...options(saved),requireTmsEvidence:true};const extract=vi.spyOn(retry.extractor,'extract');
+ await expect(runAuditPipeline(retry)).rejects.toMatchObject({message:'TMS_EVIDENCE_INCOMPLETE'});
+ expect(extract).not.toHaveBeenCalled();expect(retry.store.commit).not.toHaveBeenCalled();
 });

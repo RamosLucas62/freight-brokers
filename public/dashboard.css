@@ -37,6 +37,10 @@ aside{overflow-y:auto}aside>.brand,aside>select,aside>label,aside>nav,#admin-nav
 .integration-actions{padding-top:14px;border-top:1px solid var(--line);font-size:12px;overflow-wrap:anywhere}
 .integration-actions small{color:var(--secondary)}
 .integration-help{justify-self:start;color:var(--blue);font-size:12px;font-weight:600;text-underline-offset:3px}
+#tms-provider-detail{display:grid;gap:16px;min-width:0}
+#tms-provider-detail>.integration-card{padding:16px 0 0;border:0;border-top:1px solid var(--line);border-radius:0}
+#tms-panel>select{max-width:480px;width:100%;min-height:44px}
+#tms-provider-detail>button{justify-self:start;min-height:44px}
 @media(max-width:700px){.integration-card{padding:18px}.integration-heading,.integration-actions{align-items:flex-start;flex-direction:column}.integration-fields{grid-template-columns:1fr}.integration-form button{width:100%}}
 
 /* Authenticated AI support — a quiet operational layer above the portal. */

@@ -9,6 +9,8 @@ function key():Buffer{
  return decoded;
 }
 
+export function roseCredentialsReady():boolean{try{key();return true;}catch{return false;}}
+
 export function encryptRoseCredentials(account:RoseRocketServiceAccount):string{
  const nonce=randomBytes(12);
  const cipher=createCipheriv('aes-256-gcm',key(),nonce);

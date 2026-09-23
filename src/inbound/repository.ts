@@ -4,7 +4,12 @@ import type { AuditReport } from '../types/report.types.js';
 import { recipientAliases, type ReceivedEvent } from './events.js';
 import {invoiceObjectKey,putInvoiceObject} from '../storage/r2.js';
 import type {DocumentType} from '../documents/classifier.js';
-export interface InboundJob { id:string; tenant_id:string; email_id:string; attempts?:number; }
+export interface InboundJob { id:string; tenant_id:string; email_id:string; attempts?:number; source?:string; tms_provider?:string; tms_connection_version?:string; tms_record_id?:string; tms_documents?:unknown; }
+export async function assertEmailIntakeEnabled(tenantId:string):Promise<void>{
+ const {data,error}=await getSupabaseClient().rpc('email_intake_enabled',{p_tenant:tenantId});
+ if(error)throw new Error('INTAKE_STATUS_UNAVAILABLE');
+ if(data!==true)throw new Error('EMAIL_INTAKE_DISABLED_TMS');
+}
 export async function authorizeInbound(job:InboundJob,sender:string):Promise<void>{
  const {data,error}=await getSupabaseClient().rpc('authorize_inbound_processing',{p_tenant:job.tenant_id,p_sender:sender});
  if(error||!data)throw new Error('UNAUTHORIZED_OR_QUOTA_EXCEEDED');
@@ -21,7 +26,7 @@ export async function claim():Promise<InboundJob|null> {
  return data?.[0]??null;
 }
 export async function finish(job:InboundJob,status:string,result:AuditReport|null,errorCode:string|null) {
- const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({status,result,error_code:errorCode,finished_at:new Date().toISOString()})
+ const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({status,result,error_code:errorCode,...(status==='completed'?{evidence_issues:null}:{}),finished_at:new Date().toISOString()})
  .eq('id',job.id).eq('tenant_id',job.tenant_id).eq('status','processing');
  if(error)throw new Error('QUEUE_UPDATE_FAILED');
 }
@@ -76,4 +81,13 @@ export async function savedReport(job:InboundJob):Promise<AuditReport|null> {
  const {data,error}=await getSupabaseClient().from('audit_runs').select('report').eq('tenant_id',job.tenant_id).eq('run_id',job.id).maybeSingle();
  if(error)throw new Error('REPORT_LOOKUP_FAILED');
  return data?.report??null;
+}
+
+export async function recordEvidenceIssues(job:InboundJob,issues:import('../reconciliation/evidence.js').EvidenceIssue[]){
+ const {error}=await getSupabaseClient().from('audit_inbound_jobs').update({evidence_issues:issues}).eq('id',job.id).eq('tenant_id',job.tenant_id).eq('status','processing');
+ if(error)throw new Error('EVIDENCE_STATUS_UPDATE_FAILED');
+}
+export async function validateTmsIntake(job:InboundJob){
+ const {error}=await getSupabaseClient().rpc('validate_tms_document_intake',{p_job:job.id});
+ if(error)throw new Error('TMS_VALIDATION_UPDATE_FAILED');
 }

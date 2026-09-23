@@ -1,4 +1,7 @@
 import {afterEach,beforeEach,describe,it,expect,vi} from 'vitest';
+import {roseSyncToken} from '../../src/tms/rose-sync.js';
+const queue=vi.hoisted(()=>vi.fn());
+vi.mock('../../src/tms/rose-rocket.repository.js',()=>({enqueueRoseEvent:queue}));
 import {createApp} from '../../src/http/app.js';
 const resendSecret='whsec_'+Buffer.from('test-secret-32-bytes-long-12345678').toString('base64');
 const token='rose_webhook_test_token_1234567890123456789012345678901234567890';
@@ -8,12 +11,13 @@ const event={id:'55555555-5555-4555-8555-555555555555',type:'Order Status Change
 const enqueue=vi.fn(async()=> 'queued' as const);
 let server:ReturnType<typeof createApp>;let base:string;
 beforeEach(async()=>{
+ vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));queue.mockReset();queue.mockResolvedValue('queued');
  enqueue.mockReset();enqueue.mockResolvedValue('queued');
  server=createApp({secret:resendSecret,enqueue:async()=>{},ready:async()=>true,roseWebhook:{token,orgId:org,enqueue}});
  await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
  base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
 });
-afterEach(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+afterEach(async()=>{vi.unstubAllEnvs();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
 function send(path:string,body=JSON.stringify(event)){return fetch(base+path,{method:'POST',headers:{'content-type':'application/json'},body});}
 
 describe('Rose Rocket webhook ingress',()=>{
@@ -52,5 +56,26 @@ describe('Rose Rocket webhook ingress',()=>{
   const response=await fetch(`${base}/webhooks/rose-rocket/${token}`);
   expect(response.status).toBe(405);
   expect(enqueue).not.toHaveBeenCalled();
+ });
+});
+
+describe('Customer Rose document webhook',()=>{
+ it('authenticates a company-scoped token and durably queues its event',async()=>{
+  const response=await send(`/webhooks/rose-sync/${org}/${roseSyncToken(org)}`);
+  expect(response.status).toBe(202);expect(queue).toHaveBeenCalledWith(expect.objectContaining({orgId:org}));
+  expect((await send(`/webhooks/rose-sync/${org}/${'x'.repeat(43)}`)).status).toBe(401);
+  expect(queue).toHaveBeenCalledTimes(1);
+ });
+ it('ignores foreign organizations and non-order hints even with a valid token',async()=>{
+  const path=`/webhooks/rose-sync/${org}/${roseSyncToken(org)}`;
+  expect((await send(path,JSON.stringify({...event,orgId:event.ownerId}))).status).toBe(202);
+  expect((await send(path,JSON.stringify({...event,objectKey:'bill'}))).status).toBe(202);expect(queue).not.toHaveBeenCalled();
+ });
+ it('rejects invalid bodies and exposes only safe retryable queue errors',async()=>{
+  const path=`/webhooks/rose-sync/${org}/${roseSyncToken(org)}`;
+  expect((await send(path,'{')).status).toBe(400);
+  expect((await send(path,'x'.repeat(64*1024+1))).status).toBe(413);
+  queue.mockRejectedValueOnce(new Error('secret'));
+  const response=await send(path);expect(response.status).toBe(503);expect(await response.text()).not.toContain('secret');
  });
 });

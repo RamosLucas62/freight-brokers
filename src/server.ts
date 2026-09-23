@@ -12,6 +12,7 @@ import {createRateLimiter} from './security/rate-limit.js';
 import {createFreeAuditHttpHandler} from './free-audit/http.js';
 import {startFreeAuditWorker} from './free-audit/worker.js';
 import {failure,info} from './observability/logger.js';
+import {startTmsSyncWorker} from './tms/sync.js';
 import {RoseRocketClient} from './tms/rose-rocket.js';
 import {enqueueRoseEvent} from './tms/rose-rocket.repository.js';
 import {startRoseDiscoveryWorker} from './tms/rose-rocket.worker.js';
@@ -91,6 +92,7 @@ const stopFreeAudits=config.WORKER_ENABLED==='true'
  ?startFreeAuditWorker(new ResendSender(config.RESEND_API_KEY,config.RESEND_FROM_EMAIL),config.FREE_AUDIT_OFFER_URL,config.FREE_AUDIT_PUBLIC_URL,config.CSRF_SECRET)
  :async()=>{};
 const stopBilling=config.WORKER_ENABLED==='true'?startBillingMaintenanceWorker():async()=>{};
+const stopTms=config.WORKER_ENABLED==='true'?startTmsSyncWorker():async()=>{};
 const stopRose=config.WORKER_ENABLED==='true'&&roseClient?startRoseDiscoveryWorker(roseClient):async()=>{};
 server.listen(config.PORT,'0.0.0.0',()=>info('server.started',{port:config.PORT,workers_enabled:config.WORKER_ENABLED==='true',node_env:process.env.NODE_ENV??'unknown'}));
 let closing=false;
@@ -98,7 +100,7 @@ async function shutdown(){
  if(closing)return;closing=true;info('server.shutdown.started');
  server.close();
  const deadline=setTimeout(()=>process.exit(1),25000);deadline.unref();
- await Promise.all([stopWorker(),stopNotifications(),stopFreeAudits(),stopBilling(),stopRose(),limiter.close()]);clearTimeout(deadline);info('server.shutdown.completed');process.exit(0);
+ await Promise.all([stopWorker(),stopNotifications(),stopFreeAudits(),stopBilling(),stopRose(),stopTms(),limiter.close()]);clearTimeout(deadline);info('server.shutdown.completed');process.exit(0);
 }
 process.on('SIGTERM',()=>void shutdown());process.on('SIGINT',()=>void shutdown());
 process.on('unhandledRejection',error=>failure('process.unhandled_rejection',error));

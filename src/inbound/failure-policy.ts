@@ -1,6 +1,6 @@
 import {errorFields} from '../observability/logger.js';
 
-const PROVIDER_STAGES=new Set(['classify_document','extract_pod','extract_rate_confirmation','audit_pipeline']);
+const PROVIDER_STAGES=new Set(['classify_document','extract_pod','extract_rate_confirmation','extract_accessorial_evidence','audit_pipeline','list_attachments','download_attachment']);
 
 export interface InboundFailureDecision {
   retry:boolean;
@@ -10,7 +10,7 @@ export interface InboundFailureDecision {
 }
 
 export function inboundFailureDecision(error:unknown,stage:string,attempt=1):InboundFailureDecision{
-  const fields=errorFields(error);const code=String(fields.error_code??'UNKNOWN_ERROR');const status=Number(fields.upstream_status??0);
+  const fields=errorFields(error);const code=String(fields.error_code??'UNKNOWN_ERROR');const status=Number(fields.upstream_status??(error instanceof Error?error.message.match(/HTTP_(\d{3})/)?.[1]:0)??0);
   const message=error instanceof Error?error.message:'';
   const temporaryCode=new Set([
     'NETWORK_TIMEOUT','OPENROUTER_TIMEOUT_OR_NETWORK','OPENROUTER_INVALID_RESPONSE','FMCSA_TIMEOUT_OR_NETWORK','FMCSA_INVALID_RESPONSE',

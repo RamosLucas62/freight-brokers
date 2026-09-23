@@ -23,7 +23,7 @@ export function errorFields(error:unknown):Fields{
  if(name==='TimeoutError')return {error_code:'NETWORK_TIMEOUT',error_type:name};
  const known:[RegExp,string][]=[
   [/Unknown Stripe subscription/i,'STRIPE_SUBSCRIPTION_NOT_READY'],
-  [/(?:OpenRouter|Document classification|POD extraction|Rate confirmation extraction) (?:request )?failed or timed out/i,'OPENROUTER_TIMEOUT_OR_NETWORK'],[/(?:OpenRouter|Document classification|POD extraction|Rate confirmation extraction) (?:extraction )?failed \(HTTP (\d+)\)/i,'OPENROUTER_HTTP_ERROR'],[/(?:OpenRouter returned|POD provider returned|Rate confirmation provider returned) an incomplete/i,'OPENROUTER_INVALID_RESPONSE'],
+  [/(?:OpenRouter|Document classification|POD extraction|Rate confirmation extraction|Accessorial extraction) (?:request )?failed or timed out/i,'OPENROUTER_TIMEOUT_OR_NETWORK'],[/(?:OpenRouter|Document classification|POD extraction|Rate confirmation extraction|Accessorial extraction) (?:extraction )?failed \(HTTP (\d+)\)/i,'OPENROUTER_HTTP_ERROR'],[/(?:OpenRouter returned|POD provider returned|Rate confirmation provider returned) an incomplete/i,'OPENROUTER_INVALID_RESPONSE'],
   [/FMCSA request failed or timed out/i,'FMCSA_TIMEOUT_OR_NETWORK'],[/FMCSA lookup failed \(HTTP (\d+)\)/i,'FMCSA_HTTP_ERROR'],[/FMCSA returned an invalid response/i,'FMCSA_INVALID_RESPONSE'],[/FMCSA lookup returned no unique carrier/i,'FMCSA_NO_UNIQUE_CARRIER'],
   [/Expected exactly one invoice/i,'PDF_INVOICE_COUNT_INVALID'],[/Not a PDF/i,'INVALID_PDF'],[/File changed during extraction/i,'PDF_CHANGED_DURING_EXTRACTION'],[/Cross-account history rejected/i,'TENANT_ISOLATION_VIOLATION'],
  ];

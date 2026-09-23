@@ -1,6 +1,10 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {createApp} from '../../src/http/app.js';
+import {McLeodClient} from '../../src/tms/mcleod.js';
+import {TaiClient} from '../../src/tms/tai.js';
+import {decryptTmsCredentials} from '../../src/tms/credentials.js';
 import {RoseRocketClient} from '../../src/tms/rose-rocket.js';
+const tms=vi.hoisted(()=>({rows:[] as any[],lastWrite:null as any,writes:[] as any[],error:null as any,filters:[] as any[]}));
 const rose=vi.hoisted(()=>({role:'owner',row:null as null|{org_id:string},lastWrite:null as any}));
 const mocks=vi.hoisted(()=>({isAdmin:false,enabled:true,guideCompletedAt:null as string|null,legalAcceptedAt:'2026-09-12T18:00:00.000Z' as string|null,createUser:vi.fn(),generateLink:vi.fn(),getUser:vi.fn(),refreshSession:vi.fn(),otp:vi.fn(),from:vi.fn(),rpc:vi.fn(),retrieveCheckout:vi.fn(),retrieveSubscription:vi.fn(),sendSecurityEmail:vi.fn(),answerPortalSupport:vi.fn(),notifySupportRequest:vi.fn(),notifyLeadFunnel:vi.fn(),notifyOperationalError:vi.fn(),query:{select:vi.fn(),eq:vi.fn(),gte:vi.fn(),order:vi.fn(),range:vi.fn(),maybeSingle:vi.fn()}}));
 vi.mock('@supabase/supabase-js',()=>({createClient:()=>({auth:{getUser:mocks.getUser,refreshSession:mocks.refreshSession,signInWithOtp:mocks.otp}})}));
@@ -12,7 +16,7 @@ vi.mock('../../src/free-audit/support.js',()=>({answerPortalSupport:mocks.answer
 const tenant='11111111-1111-4111-8111-111111111111';const other='22222222-2222-4222-8222-222222222222';
 let server:ReturnType<typeof createApp>,base:string;
 beforeEach(async()=>{
- rose.role='owner';rose.row=null;rose.lastWrite=null;
+ vi.stubEnv('WORKER_ENABLED','true');rose.role='owner';rose.row=null;rose.lastWrite=null;tms.rows=[];tms.lastWrite=null;tms.writes=[];tms.error=null;tms.filters=[];vi.stubEnv('TMS_CREDENTIAL_KEY','');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY','');vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','');
  vi.resetAllMocks();mocks.isAdmin=false;mocks.enabled=true;mocks.guideCompletedAt=null;mocks.legalAcceptedAt='2026-09-12T18:00:00.000Z';vi.stubEnv('PORTAL_URL','https://portal.example.com');vi.stubEnv('SUPABASE_ANON_KEY','public-key');vi.stubEnv('SUPABASE_URL','https://example.supabase.co');
  mocks.getUser.mockResolvedValue({data:{user:{id:'user-1',email:'client@example.com'}},error:null});
  mocks.refreshSession.mockResolvedValue({data:{user:null,session:null},error:{message:'invalid refresh token'}});
@@ -26,6 +30,9 @@ beforeEach(async()=>{
   if(['audit_admins','audit_portal_users'].includes(table))return{select:()=>({eq:()=>({maybeSingle:()=>Promise.resolve({data:table==='audit_admins'?(mocks.isAdmin?{user_id:'user-1'}:null):{enabled:mocks.enabled,guide_completed_at:mocks.guideCompletedAt},error:null})})})};
   if(table==='audit_portal_legal_acceptances'){const chain:any={eq:()=>chain,maybeSingle:()=>Promise.resolve({data:mocks.legalAcceptedAt?{accepted_at:mocks.legalAcceptedAt}:null,error:null})};return{select:()=>chain};}
   if(table==='audit_memberships')return{select:()=>({eq:()=>Promise.resolve({data:[{tenant_id:tenant,role:rose.role,audit_tenants:{id:tenant,name:'Company',alias:'company',status:'active'}}],error:null})})};
+  if(table==='audit_tms_connections'){
+   const chain:any={select:()=>chain,eq:(...args:any[])=>{tms.filters.push(args);return chain;},order:()=>chain,range:()=>chain,upsert:async(data:any)=>{tms.lastWrite=data;tms.writes.push(data);return {error:tms.error};},update:(data:any)=>{tms.lastWrite=data;tms.writes.push(data);return chain;},then:(resolve:any)=>resolve({data:tms.rows,error:tms.error,count:tms.rows.length})};return chain;
+  }
   if(table==='audit_rose_connections'){
    const chain:any={select:()=>chain,eq:()=>chain,maybeSingle:()=>Promise.resolve({data:rose.row,error:null}),insert:async(data:any)=>{rose.lastWrite=data;return {error:null};},update:(data:any)=>{rose.lastWrite=data;return chain;},then:(resolve:any)=>resolve({error:null})};
    return chain;
@@ -67,7 +74,7 @@ it('does not allow the legal endpoint to record unchecked consent',async()=>{moc
 it('records guide completion for the authenticated customer',async()=>{mocks.rpc.mockResolvedValue({data:'2026-09-10T12:00:00.000Z',error:null});const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(200);expect(await r.json()).toMatchObject({ok:true});expect(mocks.rpc).toHaveBeenCalledWith('portal_complete_guide');});
 it('does not expose the customer guide action in administrator mode',async()=>{mocks.isAdmin=true;const r=await fetch(base+'/api/portal/guide/complete',{method:'POST',headers,body:'{}'});expect(r.status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_complete_guide');});
 it('rejects cross-company reads',async()=>{const r=await fetch(base+'/api/portal/invoices?company='+other,{headers});expect(r.status).toBe(403);expect(mocks.from).not.toHaveBeenCalledWith('invoices');});
-it('keeps Rose Rocket setup closed unless explicitly enabled',async()=>{
+it('keeps Rose Rocket setup closed without secure credential storage',async()=>{
  const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:'{}'});
  expect(r.status).toBe(503);expect(mocks.from).not.toHaveBeenCalledWith('audit_rose_connections');
 });
@@ -76,23 +83,22 @@ it('accepts only an owner or billing administrator for Rose Rocket setup',async(
  const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:'{}'});
  expect(r.status).toBe(403);expect(mocks.from).not.toHaveBeenCalledWith('audit_rose_connections');
 });
-it('verifies a Rose Rocket service account but stores it encrypted and disabled',async()=>{
+it('verifies Rose credentials and registers automatic document delivery',async()=>{
  vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));
- const verified=vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockResolvedValue();
+ const verified=vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockResolvedValue();const webhook=vi.spyOn(RoseRocketClient.prototype,'registerDocumentWebhook').mockResolvedValue();
  const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({org_id:other,user_id:'33333333-3333-4333-8333-333333333333',client_id:'client-1',client_secret:'private-secret'})});
- expect(r.status).toBe(200);expect(await r.json()).toMatchObject({status:'pending',org_id:other});
- expect(verified).toHaveBeenCalledOnce();expect(rose.lastWrite).toMatchObject({org_id:other,tenant_id:tenant,connection_state:'pending',enabled:false});
- expect(rose.lastWrite.credentials_ciphertext).not.toContain('private-secret');
+ expect(r.status).toBe(200);expect(await r.json()).toMatchObject({status:'active',org_id:other});
+ expect(verified).toHaveBeenCalledOnce();expect(webhook).toHaveBeenCalledWith(expect.stringContaining('/webhooks/rose-sync/'));expect(mocks.rpc).toHaveBeenCalledWith('activate_rose_document_sync',expect.objectContaining({p_tenant:tenant}));expect(tms.writes.find(row=>row.credentials_ciphertext).credentials_ciphertext).not.toContain('private-secret');expect(tms.lastWrite).toMatchObject({sync_enabled:false});
 });
 it('does not store Rose Rocket credentials when the provider rejects them',async()=>{
- vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');
+ vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','true');vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));
  vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockRejectedValue(new Error('ROSE_ACCESS_HTTP_403'));
  const r=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({org_id:other,user_id:'33333333-3333-4333-8333-333333333333',client_id:'client-1',client_secret:'invalid-secret'})});
  expect(r.status).toBe(422);expect(rose.lastWrite).toBeNull();
 });
 it('disconnects Rose Rocket without exposing or deleting audit records',async()=>{
  const r=await fetch(base+`/api/portal/integrations/rose-rocket/disconnect?company=${tenant}`,{method:'POST',headers,body:'{}'});
- expect(r.status).toBe(200);expect(rose.lastWrite).toMatchObject({credentials_ciphertext:null,connected_at:null,enabled:false,connection_state:'disconnected'});
+ expect(r.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('disconnect_rose_document_sync',{p_tenant:tenant});
 });
 it('scopes and paginates every supported collection',async()=>{for(const collection of ['jobs','invoices','reports','exceptions','history']){const r=await fetch(base+`/api/portal/${collection}?company=${tenant}&page=2`,{headers});expect(r.status).toBe(200);expect(mocks.query.eq).toHaveBeenLastCalledWith('tenant_id',tenant);expect(mocks.query.range).toHaveBeenLastCalledWith(100,149);}});
 it('normalizes an empty database result so the portal refresh remains renderable',async()=>{mocks.query.range.mockResolvedValueOnce({data:null,count:null,error:null});const r=await fetch(base+`/api/portal/jobs?company=${tenant}`,{headers});expect(r.status).toBe(200);expect(await r.json()).toEqual({rows:[],total:0,page:0});});
@@ -168,7 +174,8 @@ it('reports stale job conflicts without leaking database details',async()=>{mock
 it('records a confirmed avoided loss using the authenticated user',async()=>{const r=await fetch(base+`/api/portal/exceptions/${other}/resolve?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({outcome:'avoided',avoided_amount:875.25,note:'Duplicate charge canceled before payment'})});expect(r.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('portal_resolve_exception',{p_user:'user-1',p_tenant:tenant,p_exception:other,p_outcome:'avoided',p_avoided_amount:875.25,p_note:'Duplicate charge canceled before payment'});});
 it('does not allow an avoided-loss claim without a confirmed amount',async()=>{const r=await fetch(base+`/api/portal/exceptions/${other}/resolve?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({outcome:'avoided',avoided_amount:null,note:'Charge reviewed by accounting'})});expect(r.status).toBe(400);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_resolve_exception',expect.anything());});
 it('saves recipients and senders without requiring authenticator enrollment',async()=>{vi.stubEnv('REQUIRE_MFA_SENSITIVE','true');const r=await fetch(base+`/api/portal/settings/notifications?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({timezone:'America/Chicago',report_emails:['OPS@example.com','owner@example.com'],inbound_senders:['billing@example.com']})});expect(r.status).toBe(200);expect(mocks.rpc).toHaveBeenCalledWith('portal_save_security_settings',{p_tenant:tenant,p_timezone:'America/Chicago',p_contacts:expect.arrayContaining([expect.objectContaining({email:'ops@example.com',token_hash:expect.stringMatching(/^[a-f0-9]{64}$/)})]),p_senders:['billing@example.com'],p_ip_fingerprint:expect.any(String)});});
-it('shows the private intake address using the plan synchronized by Stripe webhooks',async()=>{
+it.each([true,false])('reports email intake availability (%s) without changing report settings',async emailEnabled=>{
+ mocks.rpc.mockImplementation(async name=>({data:name==='email_intake_enabled'?emailEnabled:null,error:null}));
  const original=mocks.from.getMockImplementation()!;
  mocks.from.mockImplementation(table=>{
   if(table==='audit_notification_settings')return{select:()=>({eq:()=>({maybeSingle:async()=>({data:{timezone:'America/Sao_Paulo',daily_hour:7},error:null})})})};
@@ -178,7 +185,7 @@ it('shows the private intake address using the plan synchronized by Stripe webho
   if(table==='audit_invoice_usage')return{select:()=>({eq:()=>({gte:async()=>({data:[],count:0,error:null})})})};
   return original(table);
  });
- const r=await fetch(base+`/api/portal/settings?company=${tenant}`,{headers});expect(r.status).toBe(200);const result=await r.json();expect(result.notifications).toMatchObject({audit_email:'company@audit.aiolympian.com',max_recipients:3,max_senders:1});expect(result.billing).toMatchObject({plan_code:'core',billing_period:'monthly',included_invoices:500,overage_unit_amount_cents:75});expect(mocks.retrieveSubscription).not.toHaveBeenCalled();expect(mocks.rpc).not.toHaveBeenCalledWith('sync_billing_plan_from_stripe',expect.anything());
+ const r=await fetch(base+`/api/portal/settings?company=${tenant}`,{headers});expect(r.status).toBe(200);const result=await r.json();expect(result.notifications).toMatchObject({email_intake_enabled:emailEnabled,audit_email:'company@audit.aiolympian.com',max_recipients:3,max_senders:1});expect(result.billing).toMatchObject({plan_code:'core',billing_period:'monthly',included_invoices:500,overage_unit_amount_cents:75});expect(mocks.retrieveSubscription).not.toHaveBeenCalled();expect(mocks.rpc).not.toHaveBeenCalledWith('sync_billing_plan_from_stripe',expect.anything());
 });
 it('does not let a non-owner change subscription billing',async()=>{mocks.query.maybeSingle.mockResolvedValue({data:{billing_email:'owner@example.com',stripe_customer_id:'cus_1',stripe_subscription_id:'sub_1',status:'active'},error:null});const r=await fetch(base+`/api/portal/billing/cancel?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(403);expect(mocks.rpc).not.toHaveBeenCalledWith('portal_record_billing_action',expect.anything());});
 it('clears session at logout',async()=>{const r=await fetch(base+'/api/portal/logout',{method:'POST',headers,body:'{}'});expect(r.headers.get('set-cookie')).toContain('Max-Age=0');});
@@ -200,3 +207,74 @@ it('checks target company before provisioning user',async()=>{mocks.isAdmin=true
 it('provisions without sending an email and assigns access transactionally',async()=>{mocks.isAdmin=true;const original=mocks.from.getMockImplementation()!;mocks.from.mockImplementation(table=>table==='audit_tenants'?{select:()=>({eq:()=>({maybeSingle:async()=>({data:{id:tenant},error:null})})})}:original(table));mocks.rpc.mockResolvedValue({data:null,error:null});mocks.createUser.mockResolvedValue({data:{user:{id:other}},error:null});const r=await fetch(base+'/api/portal/admin/action',{method:'POST',headers,body:JSON.stringify({action:'user.create',email:'NEW@example.com',company_id:tenant})});expect(r.status).toBe(200);expect(mocks.createUser).toHaveBeenCalledWith({email:'new@example.com',email_confirm:false});expect(mocks.rpc).toHaveBeenLastCalledWith('portal_admin_action',{p_actor:'user-1',p_action:'user.register',p_payload:{user_id:other,company_id:tenant}});});
 it('reuses an existing identity instead of creating a duplicate',async()=>{mocks.isAdmin=true;const original=mocks.from.getMockImplementation()!;mocks.from.mockImplementation(table=>table==='audit_tenants'?{select:()=>({eq:()=>({maybeSingle:async()=>({data:{id:tenant},error:null})})})}:original(table));mocks.rpc.mockResolvedValue({data:other,error:null});const r=await fetch(base+'/api/portal/admin/action',{method:'POST',headers,body:JSON.stringify({action:'user.create',email:'existing@example.com',company_id:tenant})});expect(r.status).toBe(200);expect(mocks.createUser).not.toHaveBeenCalled();});
 it('hides internal errors from admin action failures',async()=>{mocks.isAdmin=true;mocks.rpc.mockResolvedValue({error:{message:'private database details'}});const r=await fetch(base+'/api/portal/admin/action',{method:'POST',headers,body:JSON.stringify({action:'user.role',user_id:other,role:'admin'})});expect(r.status).toBe(409);expect(await r.text()).not.toContain('private database');});
+
+it('lists providers without exposing credentials and scopes the read to the selected company',async()=>{
+ const r=await fetch(base+`/api/portal/integrations?company=${tenant}`,{headers});expect(r.status).toBe(200);
+ const data=await r.json();expect(data.providers).toHaveLength(7);expect(data.providers.find((p:any)=>p.id==='tai')).toMatchObject({setup_available:false,can_manage:true});expect(tms.filters).toContainEqual(['tenant_id',tenant]);
+});
+it('rejects cross-tenant integration reads and writes',async()=>{
+ for(const method of ['GET','POST']){const r=await fetch(base+`/api/portal/integrations${method==='POST'?'/tai/connect':''}?company=${other}`,{method,headers,...(method==='POST'?{body:'{}'}:{})});expect(r.status).toBe(403);}
+ expect(tms.lastWrite).toBeNull();
+});
+it('verifies Tai access before saving encrypted tenant-bound credentials',async()=>{
+ vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,9).toString('base64url'));const verify=vi.spyOn(TaiClient.prototype,'verifyAccess').mockResolvedValue();
+ const r=await fetch(base+`/api/portal/integrations/tai/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({site:'Acme',api_key:'private-key'})});
+ expect(r.status).toBe(200);expect(await r.json()).toEqual({status:'verified'});expect(verify).toHaveBeenCalledOnce();expect(tms.lastWrite).toMatchObject({tenant_id:tenant,provider:'tai',status:'verified',account_label:'acme.taicloud.net'});expect(decryptTmsCredentials(tenant,'tai',tms.lastWrite.credentials_ciphertext)).toEqual({site:'acme',api_key:'private-key'});
+});
+it('does not overwrite Tai credentials when verification fails',async()=>{
+ vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,9).toString('base64url'));vi.spyOn(TaiClient.prototype,'verifyAccess').mockRejectedValue(new Error('provider echoed SECRET'));
+ const r=await fetch(base+`/api/portal/integrations/tai/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({site:'acme',api_key:'private-key'})});expect(r.status).toBe(422);expect(await r.text()).not.toContain('SECRET');expect(tms.lastWrite).toBeNull();
+});
+it('checks storage readiness before contacting Tai',async()=>{
+ const verify=vi.spyOn(TaiClient.prototype,'verifyAccess');const r=await fetch(base+`/api/portal/integrations/tai/connect?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(503);expect(verify).not.toHaveBeenCalled();expect(tms.lastWrite).toBeNull();
+});
+it('rejects viewer, global-admin customer mutations and missing required MFA',async()=>{
+ for(const role of ['viewer','admin','mfa']){
+  rose.role=role==='viewer'?'viewer':'owner';mocks.isAdmin=role==='admin';vi.stubEnv('REQUIRE_MFA_SENSITIVE',role==='mfa'?'true':'false');
+  const r=await fetch(base+`/api/portal/integrations/turvo/request?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(403);
+ }
+ expect(tms.lastWrite).toBeNull();
+});
+it.each(['mcleod','turvo','aljex','ascendtms','mercurygate'])('refuses a %s support request instead of pretending to connect',async provider=>{
+ const r=await fetch(base+`/api/portal/integrations/${provider}/request?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(409);expect(tms.lastWrite).toBeNull();
+});
+it('rejects unknown providers and unsupported connection methods',async()=>{
+ for(const [path,status] of [['unknown/connect',404],['turvo/connect',409],['tai/request',409]]){const r=await fetch(base+`/api/portal/integrations/${path}?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(status);}
+ expect(tms.lastWrite).toBeNull();
+});
+it('disconnects even when credential storage is unavailable and clears saved secrets',async()=>{
+ const r=await fetch(base+`/api/portal/integrations/tai/disconnect?company=${tenant}`,{method:'POST',headers,body:'{}'});expect(r.status).toBe(200);expect(tms.lastWrite).toMatchObject({status:'disconnected',credentials_ciphertext:null,verified_at:null});expect(tms.filters).toContainEqual(['tenant_id',tenant]);expect(tms.filters).toContainEqual(['provider','tai']);
+});
+it('does not report automatic import as configured when persistence fails',async()=>{
+ vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,9).toString('base64url'));vi.spyOn(TaiClient.prototype,'verifyAccess').mockResolvedValue();tms.error={code:'42P01'};const r=await fetch(base+`/api/portal/integrations/tai/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({site:'acme',api_key:'key'})});expect(r.status).toBe(503);
+});
+it('restricts the TMS administrative queue to global administrators',async()=>{
+ let r=await fetch(base+'/api/portal/admin/integrations',{headers});expect(r.status).toBe(403);mocks.isAdmin=true;
+ r=await fetch(base+'/api/portal/admin/integrations',{headers});expect(r.status).toBe(200);expect(await r.json()).toEqual({rows:[],total:0});
+});
+it('enables Rose setup with a valid key unless explicitly paused',async()=>{
+ vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,1).toString('base64url'));
+ let r=await fetch(base+`/api/portal/integrations?company=${tenant}`,{headers});expect((await r.json()).providers[0].setup_available).toBe(true);
+ vi.stubEnv('ROSE_ROCKET_CONNECT_ENABLED','false');r=await fetch(base+`/api/portal/integrations?company=${tenant}`,{headers});expect((await r.json()).providers[0].setup_available).toBe(false);
+});
+
+it('verifies hosted McLeod credentials and enables encrypted automatic import',async()=>{
+ vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,8).toString('base64url'));
+ const verify=vi.spyOn(McLeodClient.prototype,'verifyAccess').mockResolvedValue();
+ const credentials={host:'acme.loadtracking.com',company_id:'TMS',token:'private-token',document_type_ids:['BILL','POD']};
+ const response=await fetch(base+`/api/portal/integrations/mcleod/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify(credentials)});
+ expect(response.status).toBe(200);expect(verify).toHaveBeenCalledOnce();expect(tms.lastWrite).toMatchObject({provider:'mcleod',status:'verified',sync_enabled:true});
+ expect(decryptTmsCredentials(tenant,'mcleod',tms.lastWrite.credentials_ciphertext)).toEqual(credentials);
+});
+it('does not accept new connections when automatic processing is disabled',async()=>{
+ vi.stubEnv('WORKER_ENABLED','false');vi.stubEnv('TMS_CREDENTIAL_KEY',Buffer.alloc(32,8).toString('base64url'));
+ const response=await fetch(base+`/api/portal/integrations/tai/connect?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({site:'acme',api_key:'key'})});
+ expect(response.status).toBe(503);expect(tms.writes).toHaveLength(0);
+});
+it('keeps Rose import paused when remote webhook registration fails',async()=>{
+ vi.stubEnv('ROSE_ROCKET_CREDENTIAL_KEY',Buffer.alloc(32,7).toString('base64url'));
+ vi.spyOn(RoseRocketClient.prototype,'verifyAccess').mockResolvedValue();vi.spyOn(RoseRocketClient.prototype,'registerDocumentWebhook').mockRejectedValue(new Error('forbidden'));
+ const response=await fetch(base+`/api/portal/integrations/rose-rocket?company=${tenant}`,{method:'POST',headers,body:JSON.stringify({org_id:other,user_id:tenant,client_id:'client',client_secret:'secret'})});
+ expect(response.status).toBe(422);expect(tms.lastWrite).toMatchObject({sync_enabled:false});expect(rose.lastWrite).toMatchObject({enabled:false,connection_state:'pending'});
+ expect(mocks.rpc).not.toHaveBeenCalledWith('activate_rose_document_sync',expect.anything());
+});
