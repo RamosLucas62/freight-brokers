@@ -204,3 +204,20 @@ An uploaded typed rate confirmation takes precedence to avoid duplicate contract
 PDFs generated solely as accounting bills or unsigned BOL templates do not substitute
 for an original carrier invoice or signed POD. Production rollout still requires real
 supplier acceptance; no live credentials were available during implementation.
+
+## Database outage / missing-migration behavior
+
+The TMS scheduler retries failed claim/completion operations after 15, 30, 60,
+120, 240 and then 300 seconds (maximum). Calls never overlap. After a successful
+cycle, including an empty queue, polling returns to five seconds and logs
+`tms.sync.worker_recovered`. Shutdown cancels pending retries and awaits the active
+call without scheduling another one.
+
+The first failure alerts Google Chat. Repeated failures with the same safe
+error/provider code and reason are warning logs (`tms.sync.worker_retry`), with
+at most one reminder alert every 15 minutes. A changed error or a new incident
+after recovery alerts immediately. This suppression is per process: another
+replica or a restart can emit its own first alert. Provider codes are preserved
+without logging raw database messages or secrets. For `TMS_CLAIM_FAILED` with
+`PGRST202` or `42883`, check pending migrations and API schema visibility before
+restarting; do not repeatedly redeploy as a substitute for applying migrations.

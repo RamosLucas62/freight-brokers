@@ -1,6 +1,6 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const db=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn()}));
-vi.mock('../../src/config/supabase.js',()=>({getSupabaseClient:()=>db}));
+vi.mock('../../src/config/supabase.js',async importOriginal=>({...await importOriginal<typeof import('../../src/config/supabase.js')>(),getSupabaseClient:()=>db}));
 vi.mock('../../src/notifications/google-chat.sender.js',()=>({notifyOperationalError:async()=>{}}));
 import {syncConnection,TmsReceivingClient} from '../../src/tms/sync.js';
 const connection={tenant_id:'11111111-1111-4111-8111-111111111111',provider:'tai',credentials_ciphertext:'encrypted',connection_version:'22222222-2222-4222-8222-222222222222',sync_claim:'33333333-3333-4333-8333-333333333333'};
